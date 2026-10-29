@@ -16,11 +16,23 @@ state/
 *.egg-info/
 build/
 dist/
+# Raw agent/chat runtime data and logs stay local. Project Markdown is allowed.
+.codex/
+.claude/
+.chatgpt/
+logs/
+chat_logs/
+conversation_logs/
+conversations/
+rollouts/
+sessions/
+archived_sessions/
+*.log
+*.jsonl
 # Local customer exports and assisted-run inputs stay outside source control.
 *.pdf
 *.zip
 /version_sets.csv
-/call_notes.md
 /pilot/
 /'CNZ243 - PIN 133633.00 - Bradley Co - SR74 Drainage Improvements (ARPA)/
 /manual-run/

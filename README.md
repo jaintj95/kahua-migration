@@ -5,6 +5,8 @@ Run `browser migrate` to read the CSV, find or create the named projects and
 folders, and process all version sets without selecting destinations manually.
 Sign-in and MFA are manual when Kahua requires them.
 
+Initial requirements and workflow notes are in [call_notes.md](call_notes.md).
+
 This implementation is on `feat/csv-end-to-end-automation`. The previous manual
 version remains on `main` and at `manual-pilot-v0.1.0`, with its instructions in
 [MANUAL_RUN.md](MANUAL_RUN.md).
