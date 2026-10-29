@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "source_root": ".",
+  "revision_policy": "per_sheet_occurrence",
+  "revision_start": 1,
+  "projects": [
+    {
+      "project_uid": "example-project",
+      "source_directory": "source",
+      "drawing_log": "drawing_log.csv",
+      "current_log": "current_set_log.csv",
+      "version_folders": {
+        "example-set-1": "Drawings/01",
+        "example-set-2": "Drawings/02",
+        "example-set-3": "Drawings/03"
+      },
+      "target": {
+        "transport": "browser",
+        "environment": "https://devproductionlaunch.kahua.com/",
+        "domain_name": null,
+        "project_number": null,
+        "project_name": null,
+        "folder_path": null
+      }
+    }
+  ]
+}

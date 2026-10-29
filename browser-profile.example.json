@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "transport": "browser",
+  "environment": "https://devproductionlaunch.kahua.com/",
+  "verified_at": null,
+  "verification_evidence": null,
+  "timeout_ms": 30000,
+  "input_date_format": "%m/%d/%Y",
+  "detail_fields": {},
+  "observed_controls": {
+    "enable_accessibility": {"role": "button", "name": "Enable accessibility"},
+    "add_files": {"role": "button", "name": "Add Files", "min_height": 20},
+    "more": {"role": "button", "name": "More", "min_height": 20},
+    "csv": {"role": "menuitem", "name": "CSV"},
+    "sheet_number": {"role": "textbox", "name": "Sheet Number"},
+    "revision": {"role": "textbox", "name": "Rev Number"},
+    "title": {"role": "textbox", "name": "Title"}
+  },
+  "upload_trigger": {"op": "press", "locator": {"role": "button", "name": "Add Files", "min_height": 20}, "value": "Enter"},
+  "project_guards": [
+    {"op": "assert_exists", "locator": {"role": "button", "name": "Current Project {project_number} - {project_name}", "min_height": 20}},
+    {"op": "assert_exists", "locator": {"role": "button", "name": "Open project descendants for {domain_name}", "min_height": 20}}
+  ],
+  "folder_guards": null,
+  "snapshot_guards": null,
+  "record_guards": [
+    {"op": "assert_value", "locator": {"role": "textbox", "name": "Sheet Number"}, "value": "{sheet_number}"},
+    {"op": "assert_value", "locator": {"role": "textbox", "name": "Rev Number"}, "value": "{revision}"}
+  ],
+  "recipes": {
+    "open_project": null,
+    "open_folder": null,
+    "prepare_snapshot": null,
+    "export_csv": null,
+    "prepare_upload": null,
+    "upload_metadata": null,
+    "commit_upload": null,
+    "select_record": null,
+    "edit_metadata": null,
+    "submitted": null,
+    "accepted": null,
+    "released": null,
+    "download_file": null
+  },
+  "export": {
+    "encoding": "utf-8-sig",
+    "delimiter": ",",
+    "date_format": null,
+    "columns": {
+      "sheet_number": "Sheet Number",
+      "revision": "Rev Number",
+      "title": "Title",
+      "revision_date": "Rev Date",
+      "batch_name": null,
+      "batch_date": null,
+      "is_current": "Current Rev",
+      "file_version": null
+    },
+    "record_id_columns": null,
+    "status_rules": null,
+    "true_values": null,
+    "false_values": null,
+    "count_locator": null,
+    "count_pattern": "(?P<count>[0-9,]+) Items?"
+  }
+}

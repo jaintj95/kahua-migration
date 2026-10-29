@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+!.env.example
+output/
+*.sqlite
+*.sqlite-*
+*.sqlite.lock
+tenant-contract.local.json
+migration.local.json
+browser-profile.local.json
+state/
+.DS_Store
+*.egg-info/
+build/
+dist/
+# Local customer exports and assisted-run inputs stay outside source control.
+*.pdf
+*.zip
+/version_sets.csv
+/call_notes.md
+/pilot/
+/'CNZ243 - PIN 133633.00 - Bradley Co - SR74 Drainage Improvements (ARPA)/
+/manual-run/

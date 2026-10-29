@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "environment": "https://devproductionlaunch.kahua.com/",
+  "service_origin": "https://devproductionservice.kahua.com",
+  "domain_key": null,
+  "verified_at": null,
+  "verification_evidence": null,
+  "app_name": "kahua_FileManager",
+  "entity_def": "kahua_FileManager.DrawingLogRevision",
+  "page_size": 100,
+  "query_explicits": [],
+  "fields": {
+    "sheet_number": null,
+    "revision": null,
+    "title": null,
+    "revision_date": null,
+    "batch_name": null,
+    "batch_date": null,
+    "status": null,
+    "is_current": null,
+    "file_id": null,
+    "file_parent_id": null,
+    "file_version": null
+  },
+  "workflow": {
+    "draft_status": null,
+    "submitted": {"activity_name": null, "set_name": null, "status": null},
+    "accepted": {"activity_name": null, "set_name": null, "status": null},
+    "released": {"activity_name": null, "set_name": null, "status": null},
+    "superseded_status": null
+  }
+}

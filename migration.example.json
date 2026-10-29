@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "source_root": ".",
+  "revision_policy": "per_sheet_occurrence",
+  "revision_start": 1,
+  "projects": [
+    {
+      "project_uid": "b87288f1-1b8a-42e4-a0de-0d1467fdbf8c",
+      "source_directory": "'CNZ243 - PIN 133633.00 - Bradley Co - SR74 Drainage Improvements (ARPA)",
+      "drawing_log": "'CNZ243 - PIN 133633.00 - Bradley Co - SR74 Drainage Improvements (ARPA)_drawing_log.csv",
+      "current_log": "'CNZ243 - PIN 133633.00 - Bradley Co - SR74 Drainage Improvements (ARPA)_current_set_log.csv",
+      "current_folder": "Drawings/Current",
+      "version_folders": {
+        "4c9d17e4-fbb3-44fc-b261-5c4552c2c2d4": "Drawings/Bid Set - 7-22-2025",
+        "e7564238-2b1a-4133-bdbf-3a42792a5671": "Drawings/Revision - 12-12-2025",
+        "bb5f1aa1-2c98-4007-bee4-09f28432327e": "Drawings/Roadway Revision - 4-13-2026"
+      },
+      "target": {
+        "transport": "browser",
+        "environment": "https://devproductionlaunch.kahua.com/",
+        "domain_name": null,
+        "project_number": null,
+        "project_name": null,
+        "folder_path": "Sheets"
+      }
+    },
+    {
+      "project_uid": "e770d0e0-f982-45b7-9d53-2855566dccb9",
+      "source_directory": null,
+      "target": {
+        "transport": "browser",
+        "environment": "https://devproductionlaunch.kahua.com/",
+        "domain_name": null,
+        "project_number": null,
+        "project_name": null,
+        "folder_path": "Sheets"
+      }
+    }
+  ]
+}

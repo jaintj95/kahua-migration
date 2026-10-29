@@ -1,0 +1,4 @@
+project_uid,project_name,project_kahua_entity_id,version_set_uid,version_name,published_at,upload_sequence
+example-project,Example Project,0,example-set-1,Example Bid Set,2025-01-01,1
+example-project,Example Project,0,example-set-2,Example Revision,2025-02-01,2
+example-project,Example Project,0,example-set-3,Example Roadway Revision,2025-03-01,3
