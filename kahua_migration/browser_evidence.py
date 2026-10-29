@@ -26,7 +26,7 @@ def export_folder(inspector, output, ocr_executable):
     search = inspector._control("textbox", "Search")
     if search.input_value():
         raise BrowserError("Clear the drawing-log search before claiming complete membership")
-    before = inspector._grid()
+    before = inspector.all_grid()
     open_toolbar_action(inspector, output, ocr_executable, "Export")
     lookups = page.get_by_role("checkbox", name="Include Lookups", exact=True)
     lookups.wait_for(state="attached", timeout=30000)
@@ -43,7 +43,7 @@ def export_folder(inspector, output, ocr_executable):
     exported = read_revision_export(path)
     if len(before) != len(exported) or {identity(r) for r in before} != {identity(r) for r in exported}:
         raise BrowserError("Export and visible folder differ; large-log pagination needs calibration")
-    after = inspector._grid()
+    after = inspector.all_grid()
     if {identity(r) for r in after} != {identity(r) for r in before} or len(after) != len(before):
         raise BrowserError("Folder membership changed during export")
     atomic_json(output / "membership.json", {
@@ -52,7 +52,7 @@ def export_folder(inspector, output, ocr_executable):
     return exported
 
 
-def download_original(inspector, record, membership, output, ocr_executable):
+def download_original(inspector, record, membership, output, ocr_executable, *, preserve_filter=False):
     """Download one exactly bound original and compare its bytes with the plan.
 
     A filename alone is insufficient: repeated sheet revisions share filenames.
@@ -62,9 +62,12 @@ def download_original(inspector, record, membership, output, ocr_executable):
     page, output = inspector.page, Path(output)
     output.mkdir(parents=True, exist_ok=True)
     inspector._close_detail()
-    inspector._clear_filter_chips()
+    if preserve_filter and len(membership) != 1:
+        raise BrowserError("Filtered download requires exactly one independently exported revision")
+    if not preserve_filter:
+        inspector._clear_filter_chips()
     inspector._wait_folder_layout()
-    rows = inspector._grid()
+    rows = inspector.all_grid()
     if len(rows) != len(membership) or {identity(r) for r in rows} != {identity(r) for r in membership}:
         raise BrowserError("The download folder differs from its independent export")
     matches = [r for r in rows if identity(r) == identity(record)]
@@ -74,7 +77,7 @@ def download_original(inspector, record, membership, output, ocr_executable):
     inspector._open_record(row)
     inspector._control("tab", "Details").press("Enter")
     if len(rows) > 1:
-        page.get_by_text(f"Item {row['grid_row']} of {len(rows)}", exact=True).wait_for(
+        page.get_by_text(f"Item {row.get('absolute_row', row['grid_row'])} of {len(rows)}", exact=True).wait_for(
             state="visible", timeout=30000)
     filename = Path(record["source_file"]).name
     main = page.get_by_role("main", name="File Manager Main Content", exact=True)
@@ -94,7 +97,7 @@ def download_original(inspector, record, membership, output, ocr_executable):
               "sheet_number": record["sheet_number"], "revision": record["revision"],
               "original_filename": filename, "download_path": str(path.resolve()),
               "sha256": file_digest(path), "size_bytes": path.stat().st_size,
-              "detail_index": row["grid_row"], "folder_records": len(rows)}
+              "detail_index": row.get("absolute_row", row["grid_row"]), "folder_records": len(rows)}
     result["source_match"] = result["sha256"] == record["sha256"] and result["size_bytes"] == record["size_bytes"]
     atomic_json(output / "integrity.json", result)
     if not result["source_match"]:

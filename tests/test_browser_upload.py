@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from kahua_migration.browser import BrowserError
-from kahua_migration.browser_upload import candidate_header_bounds, bind_upload_row_names, bulk_revision_date_points, upload_date_points, bind_upload_cells, isolated_header_bounds, validate_attachment_sources
+from kahua_migration.browser_upload import candidate_header_bounds, bind_upload_row_names, bulk_revision_date_points, focused_bulk_date_points, upload_date_points, bind_upload_cells, isolated_header_bounds, validate_attachment_sources
 from kahua_migration.preflight import digest, file_digest
 
 
@@ -118,6 +118,18 @@ class UploadHeaderTests(unittest.TestCase):
 
 
 class UploadDateLayoutTests(unittest.TestCase):
+    def test_bulk_calendar_uses_focused_control_when_editor_widths_lag(self):
+        viewport = {"width": 1600, "height": 1000}
+        geometry = {"tag": "BUTTON", "label": "Date Picker",
+                    "rect": {"x": 555, "y": 505, "width": 24, "height": 24},
+                    "application": {"x": -78, "y": 0, **viewport},
+                    "canvas": {"x": 0, "y": 0, **viewport}}
+        self.assertEqual(focused_bulk_date_points(geometry, viewport, 520), ((645, 517), (613, 517)))
+        with self.assertRaises(BrowserError):
+            focused_bulk_date_points(geometry, viewport, 560)
+        with self.assertRaises(BrowserError):
+            focused_bulk_date_points({**geometry, "label": "Other field"}, viewport, 520)
+
     def test_bulk_calendar_follows_both_observed_editor_widths(self):
         self.assertEqual(bulk_revision_date_points(540, [143, 143]), ((646, 540), (614, 540)))
         self.assertEqual(bulk_revision_date_points(540, [158, 158]), ((661, 540), (629, 540)))

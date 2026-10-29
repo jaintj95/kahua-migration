@@ -13,8 +13,13 @@ from .runner import Runner, build_plan, exclusive_run
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "migrate":
+        from .migration_cli import main as migrate_main
+        return migrate_main(argv[1:])
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("migrate", help="Read CSV, find/create destinations, and process the project queue")
     for name in ("login", "inspect", "audit", "run", "pilot"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--profile", type=Path, default=Path("browser-profile.example.json"))

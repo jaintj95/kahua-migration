@@ -9,7 +9,7 @@ from pathlib import Path
 from datetime import date
 from math import ceil, floor, isfinite
 
-from .browser import BrowserError
+from .browser import BrowserError, canvas_relative_rect
 from .browser_visual import click_text, recognize, text_center
 from .browser_dates import read_calendar_at
 from .journal import now
@@ -116,6 +116,18 @@ def bulk_revision_date_points(y, editor_widths):
     return (calendar_x, y), (calendar_x - 32, y)
 
 
+def focused_bulk_date_points(geometry, viewport, label_y):
+    """Bind the date button focused by Tab after editing this bulk field."""
+    if geometry.get("tag") != "BUTTON" or geometry.get("label") != "Date Picker":
+        raise BrowserError("Bulk date entry did not focus its calendar button")
+    rect = canvas_relative_rect(geometry["rect"], geometry["application"], geometry["canvas"], viewport)
+    x, y = rect["x"] + rect["width"] / 2, rect["y"] + rect["height"] / 2
+    if (rect["width"] != 24 or rect["height"] != 24 or not 625 <= x <= 670
+            or not 450 <= y <= 700 or abs(y - label_y) > 8):
+        raise BrowserError("The focused calendar is not bound to the visible bulk revision date")
+    return (x, y), (x - 32, y)
+
+
 def bind_upload_row_names(rows, previous, expected_names):
     """Keep observed filename identity on the same row while it is offscreen."""
     keys = [(r["row_id"], r["index"]) for r in rows]
@@ -138,7 +150,7 @@ def bind_upload_row_names(rows, previous, expected_names):
     return result, {key: row["File Name"] for key, row in zip(keys, result)}
 
 
-def validate_attachment_sources(manifest, records):
+def validate_attachment_sources(manifest, records, *, allow_partial=False):
     verify_manifest(manifest)
     if (not records or len({r["project_uid"] for r in records}) != 1
             or len({r["version_set_uid"] for r in records}) != 1
@@ -148,7 +160,7 @@ def validate_attachment_sources(manifest, records):
     project_uid, batch_uid = records[0]["project_uid"], records[0]["version_set_uid"]
     complete_batch = {r["operation_key"] for r in manifest["files"]
                       if r["project_uid"] == project_uid and r["version_set_uid"] == batch_uid}
-    if {r["operation_key"] for r in records} != complete_batch:
+    if not allow_partial and {r["operation_key"] for r in records} != complete_batch:
         raise BrowserError("Attach the complete audited version set, not a subset")
     paths = []
     for record in records:
@@ -162,15 +174,17 @@ def validate_attachment_sources(manifest, records):
 
 
 class BatchAttachment:
-    def __init__(self, inspector, manifest, records, journal, output, ocr_executable):
+    def __init__(self, inspector, manifest, records, journal, output, ocr_executable, *, allow_partial=False, membership_snapshot=None):
         self.inspector, self.page, self.manifest = inspector, inspector.page, manifest
         self.records, self.journal = records, journal
         self.output = Path(output).resolve()
         self.output.mkdir(parents=True, exist_ok=True)
         self.ocr = str(Path(ocr_executable).resolve())
+        self.allow_partial = allow_partial
+        self.membership_snapshot = membership_snapshot
 
     def attach(self, expected_existing):
-        sources = validate_attachment_sources(self.manifest, self.records)
+        sources = validate_attachment_sources(self.manifest, self.records, allow_partial=self.allow_partial)
         project = next(p for p in self.manifest["projects"] if p["project_uid"] == self.records[0]["project_uid"])
         if project["target"] != self.inspector.target:
             raise BrowserError("Attachment destination differs from the manifest")
@@ -178,7 +192,21 @@ class BatchAttachment:
         self.inspector._wait_folder_layout()
         if self.page.evaluate("typeof window.showOpenFilePicker") != "undefined":
             raise BrowserError("Relaunch with the HTML upload fallback before attaching files")
-        existing = self.inspector._grid()
+        if self.membership_snapshot is None:
+            existing = self.inspector.all_grid()
+        else:
+            from .browser_export import read_revision_export
+            snapshot = self.membership_snapshot
+            workbook = Path(snapshot["workbook"])
+            if (not self.allow_partial or snapshot["target"] != self.inspector.target
+                    or file_digest(workbook) != snapshot["workbook_sha256"]):
+                raise BrowserError("Attachment membership evidence changed or belongs to another destination")
+            existing = read_revision_export(workbook)
+            if existing != snapshot["records"] or len(existing) != snapshot["count"]:
+                raise BrowserError("Attachment membership does not match its independent workbook")
+            self.inspector.unfilter()
+            if self.inspector.count() != len(existing):
+                raise BrowserError("Unfiltered membership count changed before attachment")
         key = lambda r: (r["sheet_number"], r["revision"])
         if len(existing) != len(expected_existing) or {key(r) for r in existing} != {key(r) for r in expected_existing}:
             raise BrowserError("Target membership changed before attachment")
@@ -189,7 +217,10 @@ class BatchAttachment:
             if status["verified_stage"] is not None or status["pending_stage"] is not None:
                 raise BrowserError("The upload journal has an existing outcome or unresolved intent")
         for previous in expected_existing:
-            if self.journal.status(previous["operation_key"])["verified_stage"] != "verified":
+            state = self.journal.status(previous["operation_key"])
+            same_batch = self.allow_partial and previous["version_set_uid"] == self.records[0]["version_set_uid"]
+            required = "metadata_verified" if same_batch else "verified"
+            if state["verified_stage"] != required or state["pending_stage"]:
                 raise BrowserError("Finish and verify the previous batch before uploading another")
         atomic_json(self.output / "attachment-intent.json", {
             "observed_at": now(), "target": project["target"],
@@ -491,9 +522,11 @@ class UploadGrid:
             self.page.mouse.click(x, y)
             self.page.keyboard.type(part)
         self.page.keyboard.press("Tab")
-        widths = self.page.get_by_role("group", name="Date and time picker", exact=True).evaluate_all(
-            "es=>es.map(e=>e.getBoundingClientRect()).filter(r=>r.height===33).map(r=>r.width)")
-        calendar, closing = bulk_revision_date_points(y, widths)
+        geometry = self.page.locator(":focus").evaluate("""e=>({tag:e.tagName,label:e.getAttribute('aria-label'),
+            rect:e.getBoundingClientRect().toJSON(),
+            application:e.closest('[role=application]')?.getBoundingClientRect().toJSON(),
+            canvas:document.querySelector('canvas#uno-canvas')?.getBoundingClientRect().toJSON()})""")
+        calendar, closing = focused_bulk_date_points(geometry, self.page.viewport_size, y)
         actual = read_calendar_at(self.page, self.output / "bulk-revision-date-calendar", calendar, closing)
         if actual != iso:
             raise BrowserError("Bulk revision date differs from the plan")
@@ -551,9 +584,9 @@ class UploadGrid:
         self.page.screenshot(path=str(path.with_suffix(".png")))
         return path
 
-    def commit(self, manifest, journal, precommit_path):
+    def commit(self, manifest, journal, precommit_path, *, allow_partial=False):
         import json
-        validate_attachment_sources(manifest, self.records)
+        validate_attachment_sources(manifest, self.records, allow_partial=allow_partial)
         proof = json.loads(Path(precommit_path).read_text(encoding="utf-8"))
         expected = [{**{field: r[field] for field in ("sheet_number", "title", "revision", "batch_name", "revision_date", "batch_date")},
                      "original_filename": Path(r["source_file"]).name} for r in self.records]

@@ -123,6 +123,8 @@ def audit(version_path, config_path):
     versions = read_csv(version_path, VERSION_COLUMNS)
     if not versions:
         raise InputError("The version-set export is empty")
+    from .csv_config import merge_csv_config
+    config = merge_csv_config(config, versions)
     issues, projects, records = [], [], []
     files_hashed = {}
 
@@ -182,7 +184,7 @@ def audit(version_path, config_path):
                               str(target.get("folder_id")))
             else:
                 target_key = (transport, target.get("environment"), target.get("domain_name"),
-                              target.get("project_number"), target.get("folder_path"))
+                              target.get("project_number"), target.get("project_name"), target.get("folder_path"))
             if target_key in target_owners:
                 other_uid = target_owners[target_key]
                 issue("TARGET_COLLISION", f"Target folder also bound to {other_uid}", uid)

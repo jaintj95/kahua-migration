@@ -208,10 +208,18 @@ class ReadOnlyInspector:
         # Choosing Default can preserve existing filters when Default is already
         # active. Remove the actual visible chips before claiming full membership.
         chips = self.page.locator('button:has(> button[aria-label="Remove"])')
-        for chip in chips.all():
-            rect = chip.bounding_box()
-            if not rect or not (230 <= rect["y"] <= 270 and rect["height"] >= 20):
-                continue
+        for _ in range(32):
+            candidates = chips.evaluate_all("""es=>es.filter(e=>{
+                const r=e.getBoundingClientRect(); return r.y>=230 && r.y<=270 && r.height>=20;
+            }).map(e=>({id:e.id,name:e.getAttribute('aria-label')}))""")
+            if not candidates:
+                return
+            observed = candidates[0]
+            if not observed["id"] or not re.fullmatch(r"[A-Za-z0-9_-]+", observed["id"]):
+                raise BrowserError("A filter chip has no stable DOM identity")
+            # A list's nth locator shifts as earlier chips disappear. Bind this
+            # observed element, then discover the next chip after removal.
+            chip = self.page.locator('[id="' + observed["id"] + '"]')
             if not chip.get_attribute("aria-label"):
                 raise BrowserError("An active filter chip has no accessible identity")
             from playwright.sync_api import TimeoutError as PlaywrightTimeout
@@ -228,12 +236,13 @@ class ReadOnlyInspector:
                         raise BrowserError("The visible filter chip could not be removed") from None
                     self.page.screenshot(path=str(self.output / f"filter-clear-retry-{attempt + 1}.png"))
             self._wait_folder_layout()
+        raise BrowserError("Too many active filter chips to clear safely")
 
     def _open_record(self, grid):
         from playwright.sync_api import TimeoutError as PlaywrightTimeout
         for attempt in range(2):
             self._guard()
-            current = refresh_record_binding(grid, self._grid())
+            current = self._position_record(grid)
             cell = self._control("region", "Record List").locator(
                 f'[role="gridcell"][aria-rowindex="{current["grid_row"]}"]'
                 f'[aria-colindex="{current["sheet_column"]}"]')
@@ -248,6 +257,13 @@ class ReadOnlyInspector:
                 if attempt or self.page.get_by_role("button", name="Close Record Detail", exact=True).count():
                     raise BrowserError("The selected record detail did not finish opening") from None
                 self._wait_folder_layout()
+
+    def _position_record(self, grid):
+        return refresh_record_binding(grid, self._grid())
+
+    def all_grid(self):
+        """The bounded inspector still requires every row to be visible."""
+        return self._grid()
 
     def _grid(self):
         self._guard()
@@ -293,17 +309,21 @@ class ReadOnlyInspector:
                            "qa_cell_value": fields.get("QA Status")})
         return result
 
-    def read(self, *, exported_records=None, metadata_only=False):
+    def read(self, *, exported_records=None, metadata_only=False, record_keys=None, preserve_filter=False):
         """Audit only already-visible records; writes are not part of this class."""
         if self.page.get_by_role("button", name="Save / Close", exact=True).count():
             raise BrowserError("An editor is open; cancel it before read-only inspection")
         self._close_detail()
-        self._control("button", "View Selector").press("Enter")
-        self._control("button", "Default").press("Enter")
-        self.page.wait_for_timeout(350)
-        self._clear_filter_chips()
+        if preserve_filter:
+            if exported_records is None or len(exported_records) != 1:
+                raise BrowserError("Filtered inspection requires one independently exported revision")
+        else:
+            self._control("button", "View Selector").press("Enter")
+            self._control("button", "Default").press("Enter")
+            self.page.wait_for_timeout(350)
+            self._clear_filter_chips()
         self._wait_folder_layout()
-        initial = self._grid()
+        initial = self.all_grid()
         self._ocr("folder-before")
         exported = None
         if exported_records is not None:
@@ -315,13 +335,17 @@ class ReadOnlyInspector:
             raise BrowserError("Empty-folder readback needs a separately calibrated count control")
         count = None
         results = []
-        for index, grid in enumerate(initial, 1):
+        selected = initial if record_keys is None else [r for r in initial
+                    if (r["sheet_number"], r["revision"]) in set(record_keys)]
+        if record_keys is not None and len(selected) != len(set(record_keys)):
+            raise BrowserError("Requested readback records are missing or duplicated")
+        for index, grid in enumerate(selected, 1):
             self._open_record(grid)
             self._control("tab", "Details").press("Enter")
             self.page.wait_for_timeout(350)
             # Detail item numbering independently binds the opened form to the
             # clicked row before reading any metadata.
-            caption = self.page.get_by_text(re.compile(r"^Item " + str(grid["grid_row"]) + r" of [0-9,]+$"))
+            caption = self.page.get_by_text(re.compile(r"^Item " + str(grid.get("absolute_row", grid["grid_row"])) + r" of [0-9,]+$"))
             if len(initial) == 1 and exported is not None:
                 # Kahua omits the navigation caption for a one-record folder.
                 # The fresh independent export supplies membership in that case.
@@ -397,13 +421,15 @@ class ReadOnlyInspector:
                 results[-1]["target_record_id"] = export_row["target_record_id"]
             self._close_detail()
             atomic_json(self.output / "observed-records.json", results)
-        final = self._grid()
+        final = self.all_grid()
         self._ocr("folder-after")
         facts = lambda rows: sorted((r["sheet_number"], r["revision"], r["revision_date"], r["is_current"]) for r in rows)
         if facts(final) != facts(initial):
             raise BrowserError("The folder changed during inspection")
         report = {"evidence_class": "standalone_browser_readback", "target": self.target,
-                  "observed_at": datetime.now(timezone.utc).isoformat(), "complete_visible_folder": True,
+                  "observed_at": datetime.now(timezone.utc).isoformat(),
+                  "complete_visible_folder": record_keys is None,
+                  "complete_membership": True, "membership_count": len(initial),
                   "workflow_status_required": not metadata_only,
                   "records": results, "evidence": self.evidence,
                   "field_sources": {"sheet_number": "semantic_grid", "revision": "semantic_grid",

@@ -163,6 +163,13 @@ class BatchWorkflow:
     def _menu(self, action):
         open_toolbar_action(self.inspector, self.output, self.ocr, action)
 
+    def _review_rows(self):
+        table = self.page.get_by_role("grid", name="DataGrid", exact=True)
+        from playwright.sync_api import expect
+        expect(table.get_by_role("row")).to_have_count(len(self.records), timeout=60000)
+        return table.get_by_role("row").evaluate_all("""es=>es.map(e=>
+            [...e.children].map(c=>c.getAttribute('aria-label')).filter(Boolean))""")
+
     def review(self, stage):
         """Open Submit/Accept review after persisting intents; do not execute yet."""
         prior = {"submitted": "metadata_verified", "accepted": "submitted"}.get(stage)
@@ -180,10 +187,8 @@ class BatchWorkflow:
         table.wait_for(state="attached", timeout=60000)
         self.page.get_by_role("checkbox", name="Ignore Warnings", exact=True).wait_for(state="attached", timeout=30000)
         from playwright.sync_api import expect
-        expect(table.get_by_role("row")).to_have_count(len(self.records), timeout=60000)
         expect(self.inspector._control("button", "Execute")).to_be_enabled(timeout=30000)
-        rows = table.get_by_role("row").evaluate_all("""es=>es.map(e=>
-            [...e.children].map(c=>c.getAttribute('aria-label')).filter(Boolean))""")
+        rows = self._review_rows()
         verify_review_rows(rows, self.records, stage)
         if self.page.get_by_role("checkbox", name="Ignore Warnings", exact=True).is_checked():
             raise BrowserError("Workflow review is configured to ignore warnings")
@@ -199,8 +204,7 @@ class BatchWorkflow:
         for record in self.records:
             if self.journal.status(record["operation_key"])["pending_stage"] != stage:
                 raise BrowserError("No matching workflow intent")
-        rows = self.page.get_by_role("grid", name="DataGrid", exact=True).get_by_role("row").evaluate_all(
-            "es=>es.map(e=>[...e.children].map(c=>c.getAttribute('aria-label')).filter(Boolean))")
+        rows = self._review_rows()
         verify_review_rows(rows, self.records, stage)
         if self.page.get_by_role("checkbox", name="Ignore Warnings", exact=True).is_checked():
             raise BrowserError("Refusing a workflow with ignored warnings")

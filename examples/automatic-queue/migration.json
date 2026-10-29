@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "source_root": ".",
+  "revision_policy": "per_sheet_occurrence",
+  "revision_start": 1,
+  "project_defaults": {
+    "drawing_log": "drawing_log.csv",
+    "current_log": "current_set_log.csv",
+    "current_folder": "Drawings/Current",
+    "target": {
+      "transport": "browser",
+      "environment": "https://devproductionlaunch.kahua.com/",
+      "domain_name": "Your domain",
+      "project_policy": "find_or_create",
+      "folder_policy": "find_or_create",
+      "record_type": "Project"
+    }
+  }
+}

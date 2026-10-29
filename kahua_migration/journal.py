@@ -49,10 +49,77 @@ class Journal:
                 observed_at TEXT NOT NULL,
                 evidence_path TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS destinations (
+                destination_key TEXT PRIMARY KEY,
+                specification TEXT NOT NULL,
+                status TEXT NOT NULL,
+                evidence TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
         """)
 
     def close(self):
         self.db.close()
+
+    def destination(self, key, specification):
+        row = self.db.execute("SELECT * FROM destinations WHERE destination_key=?", (key,)).fetchone()
+        if row is None:
+            return None
+        if row["specification"] != json.dumps(specification, sort_keys=True):
+            raise JournalConflict("Destination specification changed after a creation intent")
+        return dict(row)
+
+    def begin_destination(self, key, specification, evidence):
+        """Commit once immediately before Save/Create. Never blindly retry it."""
+        if not evidence.get("evidence_path"):
+            raise JournalConflict("Creation requires saved precommit evidence")
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            prior = self.destination(key, specification)
+            if prior is not None and prior["status"] != "cancelled_before_action":
+                raise JournalConflict("Destination creation was already attempted; find and reconcile it")
+            if prior:
+                evidence = {**evidence, "previous_cancelled_intent": json.loads(prior["evidence"])}
+            self.db.execute("INSERT INTO destinations VALUES(?,?,?,?,?) ON CONFLICT(destination_key) "
+                            "DO UPDATE SET status=excluded.status,evidence=excluded.evidence,updated_at=excluded.updated_at", (
+                key, json.dumps(specification, sort_keys=True), "pending",
+                json.dumps(evidence, sort_keys=True), now()))
+            self.db.execute("COMMIT")
+        except BaseException:
+            self.db.execute("ROLLBACK")
+            raise
+
+    def cancel_uninvoked_destination(self, key, specification, evidence):
+        """Recover a pre-action binding failure, never a timed-out Save/Create.
+
+        The caller must establish that activation was not invoked and freshly
+        observe the complete parent directory without the destination. This is
+        a supervised reconciliation receipt, not an automatic missing-row retry.
+        """
+        if (evidence.get("action_not_invoked") is not True or evidence.get("observed_absent") is not True
+                or not evidence.get("evidence_path") or not evidence.get("reason")):
+            raise JournalConflict("Creation cancellation requires proof of no activation and fresh absence")
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            prior = self.destination(key, specification)
+            if not prior or prior["status"] != "pending":
+                raise JournalConflict("Only a pending, uninvoked creation can be cancelled")
+            receipt = {**evidence, "original_intent": json.loads(prior["evidence"])}
+            self.db.execute("UPDATE destinations SET status=?,evidence=?,updated_at=? WHERE destination_key=?",
+                            ("cancelled_before_action", json.dumps(receipt, sort_keys=True), now(), key))
+            self.db.execute("COMMIT")
+        except BaseException:
+            self.db.execute("ROLLBACK")
+            raise
+
+    def confirm_destination(self, key, specification, evidence):
+        if not evidence.get("evidence_path") or not evidence.get("observed_identity"):
+            raise JournalConflict("Destination confirmation needs observed identity and evidence")
+        self.destination(key, specification)
+        self.db.execute("INSERT INTO destinations VALUES(?,?,?,?,?) ON CONFLICT(destination_key) "
+                        "DO UPDATE SET status=excluded.status,evidence=excluded.evidence,updated_at=excluded.updated_at", (
+                            key, json.dumps(specification, sort_keys=True), "confirmed",
+                            json.dumps(evidence, sort_keys=True), now()))
 
     def _event(self, key, event, stage, evidence):
         self.db.execute("INSERT INTO events(operation_key,timestamp,event_type,stage,evidence) VALUES(?,?,?,?,?)",

@@ -1,15 +1,35 @@
 # PlanGrid to Kahua migration
 
-For the current script and its manual setup steps, start with
-[MANUAL_RUN.md](MANUAL_RUN.md). The frozen baseline is tagged
-`manual-pilot-v0.1.0`; automatic project creation and destination navigation
-are not included in that baseline.
+For the CSV-driven project queue, start with [AUTOMATIC_RUN.md](AUTOMATIC_RUN.md).
+Run `browser migrate` to read the CSV, find or create the named projects and
+folders, and process all version sets without selecting destinations manually.
+Sign-in and MFA are manual when Kahua requires them.
+
+This implementation is on `feat/csv-end-to-end-automation`. The previous manual
+version remains on `main` and at `manual-pilot-v0.1.0`, with its instructions in
+[MANUAL_RUN.md](MANUAL_RUN.md).
 
 The chosen route is **browser automation**. Files go directly from the local disk to Kahua, without API credentials, middleware transfers, Finder automation, or paid model calls. The source auditor, per-sheet revision calculation, durable journal, browser controls and verification code are implemented.
 
-The standalone browser worker completed the **four-file validation in `Sheets/Migration Worker Validation`**. All three batches finished, the correct revision history was retained, and every original PDF was downloaded and hashed again after release. The run required code fixes and supervised recovery. A clean, uninterrupted upload run of the packaged command remains unvalidated; **this is not yet ready for a 1,000-project rollout**.
+The earlier standalone worker completed the **four-file validation in
+`Sheets/Migration Worker Validation`**. All three batches finished, the correct
+revision history was retained, and every original PDF was downloaded and hashed
+again after release. That run required code fixes and supervised recovery.
+Historical pilot results are retained below. **A 1,000-project rollout and
+production throughput have not been validated.**
 
-`browser pilot` is deliberately limited to one already-open project, four revision records and two files per batch. The general project-queue adapter remains gated by its uncalibrated tenant profile. The separate API prototype is retained as optional code; it is not the selected migration route.
+| Command | Destination selection | Scope |
+|---|---|---|
+| `browser migrate` | Automatic from CSV | Project queue; every audited batch; one PDF per upload |
+| `browser pilot` | Operator opens the destination | Earlier bounded four-record/two-file pilot |
+| `browser run` | Generic profile recipes | Older adapter; tenant recipes remain uncalibrated |
+
+The new automatic worker uses the full export and unfiltered UI count for
+membership, then exact batch/sheet filters for each record's metadata, workflow
+and original bytes. It does not inherit the pilot's four-record limit. It
+creates blank projects at the domain root and Controlled folders; project
+templates and nested project creation are unsupported. The optional API
+prototype is retained separately.
 
 ## The agreed revision rule
 
@@ -26,7 +46,8 @@ For the example of a 23-file Bid Set followed by a 5-file Revision abc, every fi
 
 ```mermaid
 flowchart LR
-    A[Validate CSVs and local files] --> B[Upload all files in one version set]
+    A[Validate CSVs and local files] --> P[Find or create exact project and folder]
+    P --> B[Upload all files in one version set]
     B --> C[Check sheet identities and metadata]
     C --> D[Submit then accept then release]
     D --> E[Verify history and current revisions]
@@ -215,9 +236,28 @@ python3 -m unittest discover -s tests -v
 
 Tests cover source/revision rules, journal recovery, batch boundaries, exported metadata parsing and strict missing-field handling. The HTTP integration tests run the real API client against a localhost stand-in using published endpoint shapes and synthetic tenant fields. They establish orchestration behavior; **they do not validate the browser adapter or the live Kahua tenant**. The local HTTP tests require permission to bind localhost. No paid service calls are needed.
 
-The current suite has 93 passing tests, including pending-upload recovery, repeated-Save prevention, complete batch membership, mismatched metadata, duplicate file versions, exact workflow review rows, calendar-date parsing and focus recovery, guarded canvas targeting, stale column coordinates, observed row identity across horizontal scrolling, fresh record binding, focused OCR and completed-pilot resume without writes. The complete suite passed on October 29, 2026 with localhost access for the synthetic HTTP fixtures. Local fixture tests and small live pilots are different evidence.
+The current suite has 110 passing tests, including CSV destination mappings,
+creation-intent recovery, exact project identity, directory traversal,
+whole-batch ordering, project failure isolation, plan-only execution,
+pending-upload recovery, repeated-Save prevention, mismatched metadata,
+duplicate file versions, exact workflow review rows, date parsing, guarded
+canvas targeting and completed-pilot resume without writes. The complete suite
+passed on October 29, 2026 with localhost access for the synthetic HTTP fixtures.
+Local fixture tests and small live pilots are different evidence.
 
-The next live check is a clean run of the packaged pilot from an empty controlled folder. Beyond that, full-sized upload tables, large-log pagination, automatic cross-project navigation, session expiry and throughput need validation. The current limit of four revisions/two attachments is deliberate. Do not raise it or mark the general browser profile verified solely because the small pilot passed. At the current level of UI verification, this is a correctness prototype, not a measured high-throughput migration service.
+The automatic worker's live queue test uses five PDFs across two destinations:
+a new folder in the existing test project, plus a new test project with three
+ordered batches. Execution and completion evidence are recorded under
+`output/automatic-queue-validation/`. The first attempt stopped before saving
+anything and exposed a folder-dropdown readiness issue. End-to-end creation,
+uploads and completed-queue resume are still being validated.
+
+Large-project throughput, long-running browser stability and tenant-specific
+layouts need measurement before production rollout. The old pilot command's
+four-record/two-file limit remains in place; the automatic command uses one-file
+uploads and exact record filters instead of large upload tables or scrolling
+record selection. None of these results marks the older generic profile as
+verified.
 
 ## References
 
