@@ -7,8 +7,8 @@ Sign-in and MFA are manual when Kahua requires them.
 
 Initial requirements and workflow notes are in [call_notes.md](call_notes.md).
 
-This implementation is on `feat/csv-end-to-end-automation`. The previous manual
-version remains on `main` and at `manual-pilot-v0.1.0`, with its instructions in
+This implementation is on `main`. The previous manual
+version is preserved at `manual-pilot-v0.1.0`, with its instructions in
 [MANUAL_RUN.md](MANUAL_RUN.md).
 
 The chosen route is **browser automation**. Files go directly from the local disk to Kahua, without API credentials, middleware transfers, Finder automation, or paid model calls. The source auditor, per-sheet revision calculation, durable journal, browser controls and verification code are implemented.

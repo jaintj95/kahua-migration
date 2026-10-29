@@ -1,6 +1,6 @@
 # CSV-driven automatic migration
 
-This branch adds `browser migrate`. It reads the CSV, opens each mapped project,
+The `browser migrate` command reads the CSV, opens each mapped project,
 creates missing projects and folders when enabled, and processes every version
 set in order. You do not select destinations in the browser.
 
@@ -150,6 +150,6 @@ errors, a second service failure, or a hash mismatch stop verification.
 This retry does not apply to project/folder creation, uploads or workflow
 commands.
 
-The previous manual command is preserved on `main` and at
+The previous manual version is preserved at
 `manual-pilot-v0.1.0`. See `README.md` for the exact current live-validation
 results and remaining limits of this branch.
