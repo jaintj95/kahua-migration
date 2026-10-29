@@ -88,10 +88,33 @@ def recognize(page, executable, path, *, bounds=None):
     return document
 
 
-def click_text(page, executable, output, text, bounds=None):
+def exact_candidate_bounds(document, text, bounds):
+    """A unique exact candidate may define a crop, never an unverified click."""
+    candidates = [line for line in document["lines"] if line["text"] == text]
+    if len(candidates) != 1:
+        raise BrowserError("The visible label has no unique exact candidate for focused recognition")
+    line = candidates[0]
+    x, y, width, height = (line[k] for k in ("x", "y", "width", "height"))
+    if (not all(math.isfinite(v) for v in (x, y, width, height)) or width <= 0 or height <= 0
+            or not bounds[0] <= x < x + width <= bounds[2]
+            or not bounds[1] <= y < y + height <= bounds[3]):
+        raise BrowserError("The visible label candidate falls outside its permitted region")
+    return [max(bounds[0], math.floor(x) - 12), bounds[1],
+            min(bounds[2], math.ceil(x + width) + 12), bounds[3]]
+
+
+def click_text(page, executable, output, text, bounds=None, *, refine=False):
     path = Path(output) / ("visual-action-" + str(uuid.uuid4()) + ".png")
     document = recognize(page, executable, path, bounds=bounds)
-    x, y = text_center(document, text, bounds)
+    try:
+        x, y = text_center(document, text, bounds)
+    except BrowserError:
+        if not refine or bounds is None:
+            raise
+        bounds = exact_candidate_bounds(document, text, bounds)
+        path = path.with_name(path.stem + "-focused.png")
+        document = recognize(page, executable, path, bounds=bounds)
+        x, y = text_center(document, text, bounds)
     hit = page.evaluate("""({x,y}) => {
         const e = document.elementFromPoint(x,y);
         return e ? {tag:e.tagName, id:e.id} : null;

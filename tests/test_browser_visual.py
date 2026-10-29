@@ -6,10 +6,21 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from kahua_migration.browser import BrowserError
-from kahua_migration.browser_visual import text_center, recognize
+from kahua_migration.browser_visual import text_center, recognize, exact_candidate_bounds
 
 
 class VisualTargetTests(unittest.TestCase):
+    def test_uncertain_breadcrumb_can_only_propose_a_new_recognition_crop(self):
+        document = {"image_width": 1600, "image_height": 1000, "lines": [
+            {"text": "220 - Seattle Heights", "x": 373, "y": 198, "width": 150, "height": 14, "confidence": .5}]}
+        bounds = [365, 185, 900, 222]
+        self.assertEqual(exact_candidate_bounds(document, "220 - Seattle Heights", bounds), [365, 185, 535, 222])
+        with self.assertRaises(BrowserError):
+            text_center(document, "220 - Seattle Heights", bounds)
+        document["lines"].append(dict(document["lines"][0]))
+        with self.assertRaises(BrowserError):
+            exact_candidate_bounds(document, "220 - Seattle Heights", bounds)
+
     def document(self, lines):
         return {"image_width": 1600, "image_height": 1000, "lines": lines}
 

@@ -227,8 +227,7 @@ class BatchWorkflow:
 
     def acknowledge(self):
         self.inspector._control("button", "OK").press("Enter")
-        from playwright.sync_api import expect
-        expect(self.page.get_by_role("button", name="Add Files", exact=True)).to_be_enabled(timeout=60000)
+        self.inspector._wait_folder_layout()
 
     def begin_release(self):
         selected = self._selected()
@@ -289,6 +288,5 @@ class BatchWorkflow:
     def close_release_result(self):
         self.observe_release()
         click_text(self.page, self.ocr, self.output, "Close", [1420, 860, 1540, 910])
-        from playwright.sync_api import expect
-        expect(self.page.get_by_role("button", name="Add Files", exact=True)).to_be_enabled(timeout=60000)
+        self.inspector._wait_folder_layout()
 

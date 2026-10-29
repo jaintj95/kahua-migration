@@ -249,12 +249,20 @@ class ReadOnlyInspector:
             if cell.count() != 1 or cell.get_attribute("aria-label") != grid["sheet_number"]:
                 raise BrowserError("The selected sheet cell differs from the captured grid")
             self.ui._canvas_click(cell, double=True)
+            details = self.page.get_by_role("tab", name="Details", exact=True)
             try:
-                self.page.get_by_role("tab", name="Details", exact=True).wait_for(
-                    state="attached", timeout=5000 if attempt == 0 else 30000)
+                details.wait_for(state="attached", timeout=5000 if attempt == 0 else 30000)
                 return
             except PlaywrightTimeout:
-                if attempt or self.page.get_by_role("button", name="Close Record Detail", exact=True).count():
+                if self.page.get_by_role("button", name="Close Record Detail", exact=True).count():
+                    # The pane can open before its tabs finish loading. Wait
+                    # for that same pane; do not double-click the record again.
+                    try:
+                        details.wait_for(state="attached", timeout=60000)
+                        return
+                    except PlaywrightTimeout:
+                        raise BrowserError("The selected record detail did not finish opening") from None
+                if attempt:
                     raise BrowserError("The selected record detail did not finish opening") from None
                 self._wait_folder_layout()
 

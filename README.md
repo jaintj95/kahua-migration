@@ -11,12 +11,14 @@ version remains on `main` and at `manual-pilot-v0.1.0`, with its instructions in
 
 The chosen route is **browser automation**. Files go directly from the local disk to Kahua, without API credentials, middleware transfers, Finder automation, or paid model calls. The source auditor, per-sheet revision calculation, durable journal, browser controls and verification code are implemented.
 
-The earlier standalone worker completed the **four-file validation in
-`Sheets/Migration Worker Validation`**. All three batches finished, the correct
-revision history was retained, and every original PDF was downloaded and hashed
-again after release. That run required code fixes and supervised recovery.
-Historical pilot results are retained below. **A 1,000-project rollout and
-production throughput have not been validated.**
+The automatic worker completed live calibration for **five PDF revisions,
+four batches and two CSV destinations**. It created the missing test project
+and three Controlled folders, navigated from the CSV, and retained the expected
+revision history. Every original PDF was downloaded after release and matched
+its source hash. The run required code fixes and supervised recovery, including
+a transient Kahua download-service error. Historical pilot results are retained
+below. **A fresh uninterrupted upload run, a cold CLI execution, and a
+1,000-project rollout have not been validated.**
 
 | Command | Destination selection | Scope |
 |---|---|---|
@@ -231,26 +233,64 @@ If the target result cannot be established, the project stays blocked for invest
 ## Validation and limits
 
 ```sh
-python3 -m unittest discover -s tests -v
+.venv/bin/python -m unittest discover -s tests -v
 ```
 
 Tests cover source/revision rules, journal recovery, batch boundaries, exported metadata parsing and strict missing-field handling. The HTTP integration tests run the real API client against a localhost stand-in using published endpoint shapes and synthetic tenant fields. They establish orchestration behavior; **they do not validate the browser adapter or the live Kahua tenant**. The local HTTP tests require permission to bind localhost. No paid service calls are needed.
 
-The current suite has 110 passing tests, including CSV destination mappings,
+The current suite has 116 passing tests, including CSV destination mappings,
 creation-intent recovery, exact project identity, directory traversal,
 whole-batch ordering, project failure isolation, plan-only execution,
 pending-upload recovery, repeated-Save prevention, mismatched metadata,
 duplicate file versions, exact workflow review rows, date parsing, guarded
-canvas targeting and completed-pilot resume without writes. The complete suite
+canvas targeting, delayed detail-pane loading, bounded read-only download
+recovery, and completed-pilot resume without writes. The complete suite
 passed on October 29, 2026 with localhost access for the synthetic HTTP fixtures.
 Local fixture tests and small live pilots are different evidence.
 
-The automatic worker's live queue test uses five PDFs across two destinations:
-a new folder in the existing test project, plus a new test project with three
-ordered batches. Execution and completion evidence are recorded under
-`output/automatic-queue-validation/`. The first attempt stopped before saving
-anything and exposed a folder-dropdown readiness issue. End-to-end creation,
-uploads and completed-queue resume are still being validated.
+The automatic worker's live queue calibration completed the following scope
+on October 29, 2026, in `DEVPRODUCTION → Onindus`:
+
+| Project and folder | Verified result |
+|---|---|
+| Existing `0001 - 220 - Seattle Heights`, `Sheets/Migration CSV Queue Validation` | One batch; sheet `1`, revision `1`, released/current |
+| Created `CSV20261029 - Kahua CSV Automation Validation`, `Sheets/Imported` | Three ordered batches; sheet `1` revisions `1` and `2` superseded, revision `3` released/current; `ROADWAY-SIGN4` released/current at revision `1` |
+
+All five revisions are accepted, have one file version, and retain the expected
+titles, filenames, batch names, batch dates and revision dates. All five
+original PDFs were downloaded after release and match their source SHA-256
+values and byte counts. The live event timestamps confirm whole-batch stage
+ordering and that a version set finished before the next began uploading.
+The preserved journal has five verified operations, four completed batch
+checks, exactly five upload Save intents, and no pending operation.
+
+This was calibration with supervised recovery, not a fresh uninterrupted
+upload test. Corrections addressed delayed or hidden controls, calendar focus,
+file-chooser activation and a detail pane whose tabs arrived late. Two
+already-attached upload forms were completed with precommit checks. A final
+read-only download returned Kahua HTTP 500 / `SVC-895992`; its retry succeeded
+with matching bytes. The worker now recognizes the observed service errors
+and permits one read-only download retry. It never retries an uncertain Save.
+
+Completed-journal verification then passed without intervention. The worker
+automatically found both destinations, freshly audited all five revisions and
+downloaded all five originals again. Operations, workflow events and batch
+checks were unchanged: 65 events and five upload Save intents. Destination
+confirmation timestamps were refreshed. This verifies resume from a completed
+mutation journal; it is separate from a fresh uninterrupted upload test.
+
+The real plan-only CLI passed for both projects, with five files, zero source
+audit issues and no journal created. A fresh CLI launch with `--execute` has
+not been tested. Local evidence is retained under
+`output/automatic-queue-validation/`; it is excluded from the source ZIP.
+
+| Evidence in the original workspace | File |
+|---|---|
+| Consolidated scope, independent checks and limitations | `output/automatic-queue-validation/validation-summary.json` |
+| Successful two-project verification | `output/automatic-queue-validation/run-11/run-report.json` |
+| Unchanged operation journal across resume | `output/automatic-queue-validation/run-11/resume-proof.json` |
+| Passing 116-test suite and source fingerprints | `output/automatic-queue-validation/final-local-test-results.json` |
+| Real plan-only CLI invocation | `output/automatic-queue-validation/final-cli-plan/cli-proof.json` |
 
 Large-project throughput, long-running browser stability and tenant-specific
 layouts need measurement before production rollout. The old pilot command's

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .browser import BrowserError
 from .browser_export import read_revision_export
+from .browser_download import DownloadServiceError, clear_service_errors, wait_for_original_download
 from .browser_visual import click_text
 from .browser_workflow import open_toolbar_action
 from .journal import now
@@ -53,6 +54,22 @@ def export_folder(inspector, output, ocr_executable):
 
 
 def download_original(inspector, record, membership, output, ocr_executable, *, preserve_filter=False):
+    """Retry one explicit service error only; each attempt rebinds the revision."""
+    for attempt in range(2):
+        attempt_output = Path(output) if attempt == 0 else Path(output) / "read-only-retry"
+        try:
+            return _download_original_once(inspector, record, membership, attempt_output, ocr_executable,
+                                           preserve_filter=preserve_filter)
+        except DownloadServiceError as exc:
+            clear_service_errors(inspector.page, ocr_executable, attempt_output / "service-error-recovery")
+            atomic_json(attempt_output / "service-error-recovery.json", {
+                "observed_at": now(), "error": str(exc), "attempt": attempt + 1,
+                "operation": "read_original_file", "retry_allowed": attempt == 0})
+            if attempt:
+                raise BrowserError("Kahua original-file download failed twice: " + str(exc)) from None
+
+
+def _download_original_once(inspector, record, membership, output, ocr_executable, *, preserve_filter=False):
     """Download one exactly bound original and compare its bytes with the plan.
 
     A filename alone is insufficient: repeated sheet revisions share filenames.
@@ -86,9 +103,8 @@ def download_original(inspector, record, membership, output, ocr_executable, *, 
         raise BrowserError("The original-file header differs from the requested revision")
     main.get_by_role("button", name="More", exact=True).press("Enter")
     page.get_by_role("menuitem", name="Download", exact=True).wait_for(state="attached", timeout=30000)
-    with page.expect_download(timeout=600000) as event:
-        click_text(page, ocr_executable, output, "Download", [1088, 180, 1251, 835])
-    download = event.value
+    download = wait_for_original_download(inspector, output, ocr_executable,
+        lambda: click_text(page, ocr_executable, output, "Download", [1088, 180, 1251, 835]))
     if download.suggested_filename != filename:
         raise BrowserError("Kahua returned a different original filename")
     path = output / filename

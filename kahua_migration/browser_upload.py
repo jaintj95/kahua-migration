@@ -225,10 +225,11 @@ class BatchAttachment:
         atomic_json(self.output / "attachment-intent.json", {
             "observed_at": now(), "target": project["target"],
             "records": self.records, "existing_membership": existing})
+        add_files = self.inspector._control("button", "Add Files")
         for record in self.records:
             self.journal.begin(record["operation_key"], "uploaded")
         with self.page.expect_file_chooser(timeout=30000) as event:
-            click_text(self.page, self.ocr, self.output, "Add Files", [520, 135, 625, 185])
+            add_files.press("Enter")
         event.value.set_files([str(path) for path in sources])
         atomic_json(self.output / "attachment-handed-to-browser.json", {
             "observed_at": now(), "file_count": len(sources),
@@ -361,12 +362,21 @@ class UploadGrid:
         layout = self._cell_layout(filename, column)
         return layout["x"], layout["y"]
 
+    def _title_y(self, document):
+        bounds = [350, 250, 700, 650]
+        try:
+            return text_center(document, "Add Files", bounds)[1]
+        except BrowserError:
+            focused = candidate_header_bounds(document, "Add Files", bounds)
+            reread = recognize(self.page, self.ocr, self.output / "upload-title-focused.png", bounds=focused)
+            return text_center(reread, "Add Files", focused)[1]
+
     def _cell_layout(self, filename, column):
         if column not in self.COLUMNS:
             raise BrowserError("Unknown upload field")
         row = next(r for r in self.rows() if r["File Name"] == filename)
         document = recognize(self.page, self.ocr, self.output / "grid-layout.png", bounds=[350, 250, 1550, 700])
-        _, title_y = text_center(document, "Add Files", [350, 250, 700, 650])
+        title_y = self._title_y(document)
         strip = [350, int(title_y + 24), 1550, int(title_y + 66)]
         header_source = document
         try:
@@ -412,7 +422,7 @@ class UploadGrid:
                 raise BrowserError("The calibrated upload row height changed")
             document = recognize(self.page, self.ocr, self.output / "scroll-layout.png",
                                  bounds=[350, 250, 1550, 700])
-            _, title_y = text_center(document, "Add Files", [350, 250, 700, 650])
+            title_y = self._title_y(document)
             _, bulk_y = text_center(document, "Set Revision Number", [350, 250, 900, 700])
             row_y = title_y + 83
             if not 300 < row_y < bulk_y - 25:
@@ -522,11 +532,26 @@ class UploadGrid:
             self.page.mouse.click(x, y)
             self.page.keyboard.type(part)
         self.page.keyboard.press("Tab")
-        geometry = self.page.locator(":focus").evaluate("""e=>({tag:e.tagName,label:e.getAttribute('aria-label'),
-            rect:e.getBoundingClientRect().toJSON(),
-            application:e.closest('[role=application]')?.getBoundingClientRect().toJSON(),
-            canvas:document.querySelector('canvas#uno-canvas')?.getBoundingClientRect().toJSON()})""")
-        calendar, closing = focused_bulk_date_points(geometry, self.page.viewport_size, y)
+        previous = None
+        for _ in range(25):
+            geometry = self.page.locator(":focus").evaluate("""e=>({tag:e.tagName,label:e.getAttribute('aria-label'),
+                rect:e.getBoundingClientRect().toJSON(),
+                application:e.closest('[role=application]')?.getBoundingClientRect().toJSON(),
+                canvas:document.querySelector('canvas#uno-canvas')?.getBoundingClientRect().toJSON()})""")
+            try:
+                points = focused_bulk_date_points(geometry, self.page.viewport_size, y)
+            except BrowserError:
+                previous = None
+            else:
+                if points == previous:
+                    calendar, closing = points
+                    break
+                previous = points
+            self.page.wait_for_timeout(200)
+        else:
+            raise BrowserError("The bulk date calendar focus did not finish positioning")
+        atomic_json(self.output / "bulk-date-focus.json", {"label_y": y, "geometry": geometry,
+                                                          "open_point": calendar, "close_point": closing})
         actual = read_calendar_at(self.page, self.output / "bulk-revision-date-calendar", calendar, closing)
         if actual != iso:
             raise BrowserError("Bulk revision date differs from the plan")

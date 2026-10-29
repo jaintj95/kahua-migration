@@ -4,10 +4,10 @@ This branch adds `browser migrate`. It reads the CSV, opens each mapped project,
 creates missing projects and folders when enabled, and processes every version
 set in order. You do not select destinations in the browser.
 
-Kahua sign-in and MFA remain manual when the saved browser session expires.
+Kahua sign-in and MFA remain manual when Kahua requires them.
 The command waits for sign-in automatically; no terminal Enter or destination
-selection is required. Authentication is stored only in the local Chrome
-profile. The worker uses no LLM or Kahua API credentials.
+selection is required. The worker uses a local Chrome profile and no LLM or
+Kahua API credentials.
 
 ## Prepare the inputs
 
@@ -81,8 +81,9 @@ directory and the same journal:
   --out output/my-run-01 --execute
 ```
 
-A saved signed-in session can start directly. Otherwise sign in in the worker's
-Chrome window and acknowledge any environment notice. The worker then finds
+The worker checks for a usable signed-in session. If Kahua shows its login
+screen, sign in in the worker's Chrome window and acknowledge any environment
+notice. The worker then finds
 or creates the mapped destinations and starts the queue itself. Leave that
 browser under the worker's control until the command finishes.
 
@@ -120,6 +121,13 @@ pending outcome. A timed-out project/folder creation or upload is never blindly
 repeated. If its outcome cannot be established, that project remains stopped.
 Do not delete a journal or start a new one to force a populated folder to replay.
 Keep all evidence and SQLite files.
+
+An explicitly recognized file-download service error allows one read-only
+retry after its error dialogs are acknowledged. Both attempts recheck the
+selected revision and compare the returned bytes with the source. Unknown
+errors, a second service failure, or a hash mismatch stop verification.
+This retry does not apply to project/folder creation, uploads or workflow
+commands.
 
 The previous manual command is preserved on `main` and at
 `manual-pilot-v0.1.0`. See `README.md` for the exact current live-validation

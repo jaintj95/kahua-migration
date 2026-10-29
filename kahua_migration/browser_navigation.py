@@ -139,7 +139,8 @@ class DestinationNavigator:
         row = match_project(rows, self.target["project_number"], self.target["project_name"])
         if row:
             fresh = walker.seek(lambda: read_table_rows(table), lambda r: (column(r, 2), column(r, 3)),
-                                (self.target["project_number"], self.target["project_name"]), row["grid_row"])
+                                (self.target["project_number"], self.target["project_name"]),
+                                row.get("absolute_row", row["grid_row"]))
             cell = table.locator(f'[role="gridcell"][aria-rowindex="{fresh["grid_row"]}"][aria-colindex="3"]')
             self.ui._canvas_click(cell, double=True)
             self.wait(lambda: self.page.get_by_role("button", name=f"Current Project {self.target['project_number']} - {self.target['project_name']}", exact=True).count() == 1,
@@ -327,7 +328,7 @@ class DestinationNavigator:
         self.page.get_by_role("button", name=self.target["project_name"], exact=True).first.wait_for(state="attached", timeout=30000)
         # The same name is also used by the folder-tree root. Bind the exact
         # visible breadcrumb, where the two controls cannot be confused.
-        click_text(self.page, self.ocr, self.output, self.target["project_name"], [365, 185, 900, 222])
+        click_text(self.page, self.ocr, self.output, self.target["project_name"], [365, 185, 900, 222], refine=True)
         self.page.wait_for_timeout(700)
         search = self.control("textbox", "Search")
         if search.input_value():

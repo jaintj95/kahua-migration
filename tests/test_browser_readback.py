@@ -28,6 +28,32 @@ class ScreenshotReadbackTests(unittest.TestCase):
             inspector._guard()
         inspector._control.assert_not_called()
 
+    def test_partial_detail_waits_without_reopening_and_still_has_a_timeout(self):
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+        for never_ready in (False, True):
+            with self.subTest(never_ready=never_ready):
+                inspector = object.__new__(ReadOnlyInspector)
+                inspector.page, inspector.ui = MagicMock(), MagicMock()
+                inspector._guard, inspector._wait_folder_layout = MagicMock(), MagicMock()
+                grid = {"sheet_number": "1", "grid_row": 1, "sheet_column": 8}
+                inspector._position_record = MagicMock(return_value=grid)
+                inspector._control = MagicMock()
+                cell = inspector._control.return_value.locator.return_value
+                cell.count.return_value, cell.get_attribute.return_value = 1, "1"
+                details, opened_pane = MagicMock(), MagicMock()
+                opened_pane.count.return_value = 1
+                details.wait_for.side_effect = [PlaywrightTimeout("Tabs loading"),
+                    PlaywrightTimeout("Tabs unavailable") if never_ready else None]
+                inspector.page.get_by_role.side_effect = lambda role, **kwargs: details if role == "tab" else opened_pane
+                if never_ready:
+                    with self.assertRaisesRegex(BrowserError, "did not finish opening"):
+                        inspector._open_record(grid)
+                else:
+                    inspector._open_record(grid)
+                inspector.ui._canvas_click.assert_called_once_with(cell, double=True)
+                inspector._wait_folder_layout.assert_not_called()
+                self.assertEqual(details.wait_for.call_count, 2)
+
     def setUp(self):
         self.document = {"image_width": 1600, "image_height": 1000, "lines": [
             {"text": "Batch Name", "confidence": 1, "x": 980, "y": 500, "width": 95, "height": 18},
