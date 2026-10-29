@@ -7,6 +7,7 @@ import sys
 import time
 
 from .browser import BrowserError
+from .browser_auth import needs_sign_in
 from .browser_migration import MigrationRunner, project_scope
 from .browser_visual import install_upload_input_fallback
 from .csv_config import validate_destination
@@ -23,8 +24,7 @@ def wait_for_sign_in(page, seconds):
         access = page.get_by_role("button", name="Enable accessibility", exact=True)
         if access.count() == 1 and access.is_visible():
             access.press("Enter")
-        login = (page.get_by_role("group", name="Login", exact=True).count()
-                 or page.get_by_role("textbox", name="Password", exact=True).count())
+        login = needs_sign_in(page)
         if not login and page.get_by_role("option", name="Open Project Finder", exact=True).count():
             return
         if not announced:

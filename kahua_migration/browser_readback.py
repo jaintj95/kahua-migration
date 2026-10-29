@@ -17,6 +17,7 @@ from math import ceil, floor, isfinite
 from pathlib import Path
 
 from .browser import BrowserAdapter, BrowserError
+from .browser_auth import needs_sign_in
 from .browser_visual import recognize
 from .contract import METADATA
 from .preflight import atomic_json, file_digest
@@ -135,8 +136,7 @@ class ReadOnlyInspector:
 
     def _guard(self):
         from urllib.parse import urlsplit
-        if (self.page.get_by_role("group", name="Login", exact=True).count()
-                or self.page.get_by_role("textbox", name="Password", exact=True).count()):
+        if needs_sign_in(self.page):
             raise BrowserError("Kahua sign-in is required; unlock this browser session before continuing")
         expected, actual = urlsplit(self.target["environment"]), urlsplit(self.page.url)
         if (expected.scheme, expected.netloc) != (actual.scheme, actual.netloc):

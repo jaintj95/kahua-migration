@@ -112,13 +112,34 @@ implementation; local fixtures are not proof of production-scale reliability.
 ## Resume and reports
 
 Read the top-level `run-report.json` and each project's batch report. A project
-failure stops its remaining batches and is recorded before the queue continues
-to the next project. Authentication expiry stops the queue for sign-in.
+failure stops its remaining files and batches. The worker records that project
+as `paused`, preserves its pending journal entries, and dismisses a recognized
+upload form before continuing to the next project. It first tries Cancel, then
+the form's Close action if needed. The exact observed "Upload Failed" notice
+can arrive after cancellation; the navigator acknowledges it during recovery
+or navigation to the next project. It does not select Retry or repeat Save.
+
+The report distinguishes `completed`, `completed_with_pauses`, and `blocked`
+queues. It lists projects not started and records whether a paused upload had
+already reached its final Save intent. A queue with paused projects exits with
+code 2 even when every other project completed.
+
+If the UI cannot dismiss the form, the worker attempts one replacement tab,
+preserving journal intents. **This tenant did not restore authentication in a
+new tab during live testing.** Authentication expiry, a dead browser, or a form
+that cannot close and requires a new sign-in can therefore still stop the
+queue. Such a stop is reported explicitly; remaining projects are not marked
+completed. Do not operate the worker's tabs while it runs.
 
 Run again with unchanged CSV/configuration/source files, the same journal, and
 a new output directory. The worker finds destinations again and reconciles any
 pending outcome. A timed-out project/folder creation or upload is never blindly
 repeated. If its outcome cannot be established, that project remains stopped.
+Closing a dialog is not evidence that Save failed. A saved revision must pass
+metadata and original-file verification before its pending intent is resolved.
+An absent revision after an uncertain Save remains paused. A failure before
+Save also stays pending until the existing evidence-based precommit
+reconciliation establishes that retry is safe; this is not an automatic retry.
 Do not delete a journal or start a new one to force a populated folder to replay.
 Keep all evidence and SQLite files.
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from .browser import BrowserError
 from .browser_evidence import download_original, identity
 from .browser_navigation import AuthenticationRequired, DestinationNavigator
+from .browser_session import BrowserSessionRecovery, needs_sign_in
 from .browser_record_filter import RecordFilterInspector, RecordWorkflow, export_complete_folder
 from .browser_pilot import PilotRunner, compare_metadata, require_pending_outcome
 from .browser_readback import compare_readback
@@ -205,26 +206,58 @@ class ProjectRunner(PilotRunner):
         except Exception as exc:
             result["error"] = f"{type(exc).__name__}: {exc}"
             result["recovery"] = "Resume the same CSV, configuration and journal after reconciliation; do not replay an uncertain Save."
-            if (not self.page.get_by_role("textbox", name="Password", exact=True).count()
-                    and not self.page.get_by_role("group", name="Login", exact=True).count()):
+            result["pending_operations"] = []
+            for record in self.records:
+                state = self.journal.status(record["operation_key"])
+                if state["pending_stage"]:
+                    if not state["uncertain"]:
+                        self.journal.uncertain(record["operation_key"], result["error"])
+                    result["pending_operations"].append({
+                        "operation_key": record["operation_key"], "stage": state["pending_stage"],
+                        "upload_save_attempted": self.journal.upload_commit_attempted(record["operation_key"])})
+            if needs_sign_in(self.page):
+                result["requires_sign_in"] = True
+            else:
                 try:
-                    self.page.screenshot(path=str(self.output / "stopped.png"))
+                    self.page.screenshot(path=str(self.output / "stopped.png"), timeout=3000)
                 except Exception:
                     pass
+        result["status"] = "completed" if result["passed"] else "paused"
         result["finished_at"] = now()
         atomic_json(self.output / "run-report.json", result)
         return result
 
 
 class MigrationRunner:
-    def __init__(self, page, manifest, journal, output, ocr_executable, *, navigator_factory=DestinationNavigator, project_factory=ProjectRunner):
+    def __init__(self, page, manifest, journal, output, ocr_executable, *, navigator_factory=DestinationNavigator, project_factory=ProjectRunner, session_recovery=None):
         self.page, self.manifest, self.journal = page, manifest, journal
         self.output, self.ocr = Path(output).resolve(), ocr_executable
         self.navigator_factory, self.project_factory = navigator_factory, project_factory
+        self.session_recovery = session_recovery if session_recovery is not None else BrowserSessionRecovery(page)
+
+    def _recover_browser(self, navigator, target, entry):
+        if entry.get("requires_sign_in") or needs_sign_in(self.page):
+            raise AuthenticationRequired("Sign-in is required before the queue can continue")
+        try:
+            details = navigator.recover_to_finder()
+            entry["browser_recovery"] = {**(details if isinstance(details, dict) else {"mode": "in_app"}),
+                                         "journal_intents_preserved": True}
+        except AuthenticationRequired:
+            raise
+        except Exception as exc:
+            entry["in_app_recovery_error"] = f"{type(exc).__name__}: {exc}"
+            try:
+                self.page = self.session_recovery.replace_failed_tab(self.page, target["environment"])
+            finally:
+                # Keep the new page available even if it needs authentication.
+                self.page = self.session_recovery.page
+            entry["browser_recovery"] = {"mode": "fresh_tab", "failed_tab_closed": True,
+                                         "journal_intents_preserved": True}
 
     def run(self, project_uids=None):
         projects = select_projects(self.manifest, project_uids)
         result = {"started_at": now(), "manifest_id": self.manifest["manifest_id"], "passed": False, "projects": []}
+        recover_previous_upload_errors = False
         for project in projects:
             output = self.output / digest(project["project_uid"])[:16]
             entry = {"project_uid": project["project_uid"], "target": project["target"], "passed": False}
@@ -237,31 +270,43 @@ class MigrationRunner:
                     self.journal.register(record["operation_key"], record["fingerprint"],
                                           {**project["target"], "contract_id": CONTRACT_ID})
                 navigator = self.navigator_factory(self.page, self.journal, output / "navigation", self.ocr)
+                navigator.allow_upload_error_dismissal = recover_previous_upload_errors
                 navigation_started = True
+                self.session_recovery.checkpoint(self.page, project["target"]["environment"])
                 navigator.ensure(project["target"])
                 entry = self.project_factory(self.page, self.manifest, self.journal, output / "batches", self.ocr,
                                              project["project_uid"]).run()
             except AuthenticationRequired as exc:
-                entry.update(error=str(exc), requires_sign_in=True)
+                entry.update(error=str(exc), requires_sign_in=True, status="paused")
                 result["projects"].append(entry)
+                result["queue_stop_reason"] = "authentication_required"
                 break
             except Exception as exc:
                 entry["error"] = f"{type(exc).__name__}: {exc}"
+            notices = getattr(navigator, "dismissed_upload_errors", []) if navigation_started else []
+            if isinstance(notices, list) and notices:
+                entry["dismissed_previous_upload_errors"] = notices
+            entry["status"] = "completed" if entry["passed"] else "paused"
             result["projects"].append(entry)
             atomic_json(self.output / "run-report.json", result)
             if len(result["projects"]) == len(projects):
                 break
             if not entry["passed"] and navigation_started:
-                if self.page.get_by_role("textbox", name="Password", exact=True).count() or self.page.get_by_role("group", name="Login", exact=True).count():
-                    entry["requires_sign_in"] = True
-                    break
-                # Stay in the signed-in app. Reloading this tenant can discard
-                # authentication, and an unrecognized dialog must not be guessed.
                 try:
-                    navigator.recover_to_finder()
+                    self._recover_browser(navigator, project["target"], entry)
+                    recover_previous_upload_errors = True
+                except AuthenticationRequired as exc:
+                    entry.update(requires_sign_in=True, navigation_recovery_error=str(exc))
+                    result["queue_stop_reason"] = "authentication_required"
+                    break
                 except Exception as exc:
                     entry["navigation_recovery_error"] = f"{type(exc).__name__}: {exc}"
+                    result["queue_stop_reason"] = "browser_unavailable"
                     break
+                atomic_json(self.output / "run-report.json", result)
         result.update(finished_at=now(), passed=len(result["projects"]) == len(projects) and all(r["passed"] for r in result["projects"]))
+        result["queue_status"] = ("completed" if result["passed"] else
+                                  "blocked" if len(result["projects"]) < len(projects) else "completed_with_pauses")
+        result["not_started_projects"] = [p["project_uid"] for p in projects[len(result["projects"]):]]
         atomic_json(self.output / "run-report.json", result)
         return result

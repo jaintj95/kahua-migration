@@ -53,6 +53,27 @@ class CsvMappingTests(unittest.TestCase):
 
 
 class NavigationTests(unittest.TestCase):
+    def test_project_breadcrumb_crop_excludes_same_named_tree_and_adjacent_folders(self):
+        with tempfile.TemporaryDirectory() as temp:
+            page = MagicMock()
+            page.viewport_size = {"width": 1600, "height": 1000}
+            breadcrumb, tree = MagicMock(), MagicMock()
+            frame = {"x": 0, "y": 0, "width": 1600, "height": 1000}
+            for control, y in ((breadcrumb, 186), (tree, 280)):
+                control.is_visible.return_value = True
+                control.bounding_box.return_value = {"x": 365, "y": y, "width": 246, "height": 32}
+                control.evaluate.return_value = {"application": frame, "canvas": frame}
+            page.get_by_role.return_value.all.return_value = [breadcrumb, tree]
+            nav = DestinationNavigator(page, None, temp, "ocr")
+            nav.target = TARGET
+            self.assertEqual(nav.project_breadcrumb_bounds(), [365, 186, 611, 218])
+            page.get_by_role.return_value.all.return_value = [breadcrumb, breadcrumb]
+            with self.assertRaisesRegex(BrowserError, "unique visible"):
+                nav.project_breadcrumb_bounds()
+            page.get_by_role.return_value.all.return_value = [tree]
+            with self.assertRaisesRegex(BrowserError, "unique visible"):
+                nav.project_breadcrumb_bounds()
+
     def test_project_lookup_requires_number_and_name_and_rejects_duplicates(self):
         rows = [row(1, "0001", "Other"), row(2, "0001", "Project one"), row(3, "1", "Project one")]
         self.assertEqual(match_project(rows, "0001", "Project one")["grid_row"], 2)
@@ -248,7 +269,7 @@ class AutomaticRunnerTests(unittest.TestCase):
         page, nav, project = MagicMock(), MagicMock(), MagicMock()
         nav.return_value.ensure.side_effect = BrowserError("creation control not ready")
         result = MigrationRunner(page, self.manifest, self.journal, self.root / "queue-last", "ocr",
-                                 navigator_factory=nav, project_factory=project).run()
+                                 navigator_factory=nav, project_factory=project, session_recovery=MagicMock()).run()
         self.assertFalse(result["passed"])
         self.assertIn("creation control not ready", result["projects"][0]["error"])
         page.goto.assert_not_called()
@@ -267,7 +288,8 @@ class AutomaticRunnerTests(unittest.TestCase):
         page = MagicMock()
         page.get_by_role.return_value.count.return_value = 0
         with patch("kahua_migration.browser_migration.project_scope", return_value=(second, [], [])):
-            report = MigrationRunner(page, manifest, self.journal, self.root / "queue", "ocr", navigator_factory=nav, project_factory=project).run()
+            report = MigrationRunner(page, manifest, self.journal, self.root / "queue", "ocr", navigator_factory=nav,
+                                     project_factory=project, session_recovery=MagicMock()).run()
         self.assertEqual([r["passed"] for r in report["projects"]], [False, True])
         project.assert_called_once()
         nav.return_value.recover_to_finder.assert_called_once()

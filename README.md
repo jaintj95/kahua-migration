@@ -234,11 +234,16 @@ If the target result cannot be established, the project stays blocked for invest
 
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
+
+# Also exercise real Chrome controls, screenshots and local OCR against
+# intercepted fixture pages. Requires Chrome and output/tools/ocr-screenshot.
+KAHUA_BROWSER_TESTS=1 .venv/bin/python -m unittest discover -s tests -v
 ```
 
 Tests cover source/revision rules, journal recovery, batch boundaries, exported metadata parsing and strict missing-field handling. The HTTP integration tests run the real API client against a localhost stand-in using published endpoint shapes and synthetic tenant fields. They establish orchestration behavior; **they do not validate the browser adapter or the live Kahua tenant**. The local HTTP tests require permission to bind localhost. No paid service calls are needed.
 
-The current suite has 116 passing tests, including CSV destination mappings,
+The complete suite has 139 passing tests, including seven opt-in Chrome tests.
+It covers CSV destination mappings,
 creation-intent recovery, exact project identity, directory traversal,
 whole-batch ordering, project failure isolation, plan-only execution,
 pending-upload recovery, repeated-Save prevention, mismatched metadata,
@@ -247,6 +252,22 @@ canvas targeting, delayed detail-pane loading, bounded read-only download
 recovery, and completed-pilot resume without writes. The complete suite
 passed on October 29, 2026 with localhost access for the synthetic HTTP fixtures.
 Local fixture tests and small live pilots are different evidence.
+
+Project failure tests now inject attachment, metadata preparation, uncertain
+Save, readback, original-file verification and workflow failures. They require
+the failed project to pause and the next project to finish. Reopened-journal
+tests prove that saved revisions reconcile without another Save and unknown
+outcomes stay paused. The synthetic target deliberately allows duplicates;
+its file-version counter detects an accidental repeated Save.
+
+The optional Chrome tests exercise the real queue and journal with synthetic
+upload/workflow boundaries, real dialog controls, OCR and tab replacement.
+They cover Cancel, disabled Cancel with Close, a lost keyboard action, a delayed
+"Upload Failed" notice, unknown notices, and unavailable dismissal controls.
+All URLs are intercepted locally. The live tenant does **not** carry sign-in to
+a replacement tab, so in-app recovery is the primary path. Authentication loss
+and a UI that cannot be recovered can still block the queue. See
+`AUTOMATIC_RUN.md` for paused-project reporting and resume rules.
 
 The automatic worker's live queue calibration completed the following scope
 on October 29, 2026, in `DEVPRODUCTION → Onindus`:
@@ -291,6 +312,23 @@ not been tested. Local evidence is retained under
 | Unchanged operation journal across resume | `output/automatic-queue-validation/run-11/resume-proof.json` |
 | Passing 116-test suite and source fingerprints | `output/automatic-queue-validation/final-local-test-results.json` |
 | Real plan-only CLI invocation | `output/automatic-queue-validation/final-cli-plan/cli-proof.json` |
+
+An additional live failure-isolation check staged one existing test PDF and
+injected an attachment-stage failure while Kahua's real Add Files form was
+open. The queue marked that project paused, cancelled the form, acknowledged
+the delayed "Upload Failed" notice, and automatically completed the next
+project's read-only metadata and original-file hash verification. No final
+Save was invoked. A copy of the completed journal retained the same 65 mutation
+events, operations and batch checks; the original journal was opened read-only.
+Live uncertain-Save failures were not injected: those scenarios are covered by
+the local target that deliberately allows duplicate saves.
+
+| Failure-isolation evidence in the original workspace | File |
+|---|---|
+| Real upload-form recovery and next-project verification | `output/project-isolation-validation/live-handoff-04/run-report.json` |
+| Unchanged journal and precise live-test scope | `output/project-isolation-validation/live-handoff-04-proof.json` |
+| Final regression results and source fingerprints | `output/project-isolation-validation/full-test-results.json` |
+| Final paused-folder membership export | `output/project-isolation-validation/final-membership/export/membership.json` |
 
 Large-project throughput, long-running browser stability and tenant-specific
 layouts need measurement before production rollout. The old pilot command's

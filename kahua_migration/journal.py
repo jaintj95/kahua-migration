@@ -247,6 +247,16 @@ class Journal:
         row["verified_stage"] = STAGES[row["stage_index"]] if row["stage_index"] >= 0 else None
         return row
 
+    def upload_commit_attempted(self, key):
+        """Whether the current upload attempt has a durable final-Save intent."""
+        self._get(key)
+        intent = self.db.execute(
+            "SELECT MAX(event_id) FROM events WHERE operation_key=? AND event_type='intent' AND stage='uploaded'",
+            (key,)).fetchone()[0]
+        return bool(self.db.execute(
+            "SELECT 1 FROM events WHERE operation_key=? AND event_type='commit_intent' AND stage='uploaded' AND event_id>?",
+            (key, intent or 0)).fetchone())
+
     def batch_verified(self, key):
         return self.db.execute("SELECT 1 FROM batch_checks WHERE batch_key=?", (key,)).fetchone() is not None
 

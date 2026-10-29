@@ -2,18 +2,16 @@
 
 from pathlib import Path
 from urllib.parse import urlsplit
+import math
 import time
 
 from .browser import BrowserAdapter, BrowserError, canvas_relative_rect
+from .browser_auth import AuthenticationRequired, needs_sign_in
 from .browser_grid import GridWalker, read_table_rows
 from .browser_visual import click_text, recognize, text_center
 from .csv_config import validate_destination
 from .preflight import atomic_json, digest
 from .journal import now
-
-
-class AuthenticationRequired(BrowserError):
-    pass
 
 
 def column(row, number):
@@ -53,19 +51,22 @@ class DestinationNavigator:
         self.ui = object.__new__(BrowserAdapter)
         self.ui.page, self.ui.timeout, self.ui.context = page, 30000, {}
         self.target, self.sequence = None, 0
+        self.allow_upload_error_dismissal = False
+        self.dismissed_upload_errors = []
 
     def control(self, role, name):
         return self.ui._locate({"role": role, "name": name, "min_height": 20})
 
     def guard(self, *, project=False):
-        if (self.page.get_by_role("group", name="Login", exact=True).count()
-                or self.page.get_by_role("textbox", name="Password", exact=True).count()):
+        if needs_sign_in(self.page):
             raise AuthenticationRequired("Sign in to the migration browser; destination navigation is automatic")
         expected, actual = urlsplit(self.target["environment"]), urlsplit(self.page.url)
         if (expected.scheme, expected.netloc) != (actual.scheme, actual.netloc):
             raise BrowserError("Navigation left the configured Kahua origin")
         if self.page.viewport_size != {"width": 1600, "height": 1000}:
             raise BrowserError("Automatic navigation requires the calibrated 1600 x 1000 viewport")
+        if self.allow_upload_error_dismissal:
+            self.dismiss_upload_error()
         self.control("button", "Open project descendants for " + self.target["domain_name"])
         if project:
             self.control("button", f"Current Project {self.target['project_number']} - {self.target['project_name']}")
@@ -328,7 +329,7 @@ class DestinationNavigator:
         self.page.get_by_role("button", name=self.target["project_name"], exact=True).first.wait_for(state="attached", timeout=30000)
         # The same name is also used by the folder-tree root. Bind the exact
         # visible breadcrumb, where the two controls cannot be confused.
-        click_text(self.page, self.ocr, self.output, self.target["project_name"], [365, 185, 900, 222], refine=True)
+        click_text(self.page, self.ocr, self.output, self.target["project_name"], self.project_breadcrumb_bounds(), refine=True)
         self.page.wait_for_timeout(700)
         search = self.control("textbox", "Search")
         if search.input_value():
@@ -379,14 +380,120 @@ class DestinationNavigator:
             self.enter(search, "", name="Search", point=(925, 255))
             search.press("Enter")
 
+    def project_breadcrumb_bounds(self):
+        """Crop the named root control so OCR cannot join adjacent breadcrumbs."""
+        candidates = []
+        for control in self.page.get_by_role("button", name=self.target["project_name"], exact=True).all():
+            if not control.is_visible():
+                continue
+            rect = control.bounding_box()
+            if not rect or rect["height"] < 20:
+                continue
+            frames = control.evaluate("""e=>({
+                application:e.closest('[role=application]')?.getBoundingClientRect().toJSON(),
+                canvas:document.querySelector('canvas#uno-canvas')?.getBoundingClientRect().toJSON()
+            })""")
+            rect = canvas_relative_rect(rect, frames["application"], frames["canvas"], self.page.viewport_size)
+            bounds = [math.floor(rect["x"]), math.floor(rect["y"]),
+                      math.ceil(rect["x"] + rect["width"]), math.ceil(rect["y"] + rect["height"])]
+            if 365 <= bounds[0] < bounds[2] <= 900 and 185 <= bounds[1] < bounds[3] <= 222:
+                candidates.append(bounds)
+        if len(candidates) != 1:
+            raise BrowserError("The exact project breadcrumb has no unique visible location")
+        return candidates[0]
+
+    def _upload_open(self):
+        return bool(self.page.get_by_role("group", name="Add Files", exact=True).count()
+                    or self.page.get_by_role("grid", name="fileGrid", exact=True).count())
+
+    def dismiss_upload_error(self):
+        """Acknowledge only the observed non-retrying upload failure notice.
+
+        Cancelling a transfer can deliver this notice after navigation starts.
+        This method is enabled only after a failed project and only while the
+        navigator owns the UI, before the next project's uploads can begin.
+        It cannot resolve, cancel or otherwise alter a journal intent.
+        """
+        if not self.allow_upload_error_dismissal:
+            return False
+        title = self.page.get_by_text("Upload Failed", exact=True)
+        if title.count() != 1 or not title.is_visible():
+            return False
+        if needs_sign_in(self.page):
+            raise AuthenticationRequired("Sign-in is required before dismissing an upload notice")
+        expected, actual = urlsplit(self.target["environment"]), urlsplit(self.page.url)
+        if (expected.scheme, expected.netloc) != (actual.scheme, actual.netloc):
+            raise BrowserError("Upload notice is outside the configured Kahua origin")
+        body = self.page.get_by_text("File could not be uploaded. Please try again.", exact=True)
+        if body.count() != 1 or not body.is_visible():
+            raise BrowserError("An unrecognized upload failure notice needs attention")
+        if len(self.dismissed_upload_errors) >= 2:
+            raise BrowserError("Upload failure notices kept returning after dismissal")
+        self.sequence += 1
+        path = self.output / f"{self.sequence:03}-upload-failure-notice.png"
+        document = recognize(self.page, self.ocr, path, bounds=[600, 380, 1000, 620])
+        text_center(document, "Upload Failed")
+        text_center(document, "File could not be uploaded. Please try again.")
+        # This exact notice has an acknowledgement, not Retry or Save. The
+        # active-size filter excludes Kahua's stale hidden OK controls.
+        self.control("button", "OK").press("Enter", timeout=10000)
+        title.wait_for(state="hidden", timeout=10000)
+        event = {"observed_at": now(), "message": "Upload Failed",
+                 "evidence_path": str(path), "journal_intents_preserved": True}
+        self.dismissed_upload_errors.append(event)
+        atomic_json(path.with_suffix(".json"), event)
+        return True
+
+    def _wait_upload_closed(self):
+        for role, name in (("group", "Add Files"), ("grid", "fileGrid")):
+            self.page.get_by_role(role, name=name, exact=True).wait_for(state="detached", timeout=10000)
+
+    def _dismiss_upload(self):
+        # Only these observed dismissal actions may be used. Never activate
+        # Save, Execute, OK or a generic confirmation to clear a failed form.
+        # Close is the live-calibrated title-bar action when Cancel is disabled.
+        last_action = "form_already_closed"
+        for action in ("cancel_key", "cancel_pointer", "close_key"):
+            self.guard()
+            if not self._upload_open():
+                return last_action
+            try:
+                name = "Close" if action == "close_key" else "Cancel"
+                control = self.control("button", name)
+                if not control.is_enabled():
+                    continue
+                last_action = action
+                if action == "cancel_pointer":
+                    click_text(self.page, self.ocr, self.output, "Cancel", [300, 200, 1590, 940], refine=True)
+                else:
+                    control.press("Enter", timeout=10000)
+                self._wait_upload_closed()
+                return action
+            except AuthenticationRequired:
+                raise
+            except Exception:
+                # A single bounded retry uses the exact visible Cancel label;
+                # a unique active Close provides a final in-app dismissal.
+                continue
+        raise BrowserError("The upload form could not be dismissed using Cancel or Close")
+
     def recover_to_finder(self):
         """Continue only when in-app navigation can be re-established.
 
-        Reloading this tenant can discard its sign-in session. A known folder
-        form may be cancelled, but an upload/project dialog with uncertain
-        state stops the queue for journal-based reconciliation.
+        Close an owned failed upload form without resolving its Save outcome.
+        The journal remains pending whether Cancel discards temporary data or
+        the server has already saved the revision. Reloading this tenant can
+        discard authentication, so in-app dismissal is always preferred.
         """
+        self.allow_upload_error_dismissal = True
         self.guard()
+        recovery = {"mode": "in_app"}
+        if self._upload_open():
+            path = self.evidence("paused-upload-before-dismissal", {"journal_outcome": "unchanged"})
+            action = self._dismiss_upload()
+            recovery = {"mode": "dismissed_upload", "before_dismissal_evidence": path,
+                        "dismissal_action": action,
+                        "upload_form_closed": True, "save_outcome_reconciled": False}
         folder_name = self.page.get_by_role("textbox", name="Folder Name", exact=True)
         if folder_name.count():
             self.control("button", "Cancel").press("Enter")
@@ -396,11 +503,25 @@ class DestinationNavigator:
             raise BrowserError("An unfinished dialog needs reconciliation before the queue can continue")
         self.control("option", "Open Project Finder").press("Enter")
         self.page.get_by_role("grid", name="Partition Items", exact=True).wait_for(state="attached", timeout=30000)
+        if self._upload_open():
+            raise BrowserError("An upload form survived navigation; the next project cannot start")
+        recovery["dismissed_upload_errors"] = self.dismissed_upload_errors
+        recovery["evidence_path"] = self.evidence("project-paused-browser-ready", recovery)
+        return recovery
 
     def ensure(self, target):
         self.target = validate_destination(target)
-        self.guard()
-        self.ensure_project()
-        self.ensure_folders()
+        for attempt in range(2):
+            try:
+                self.guard()
+                self.ensure_project()
+                self.ensure_folders()
+                break
+            except Exception:
+                # A late notice may cover the screenshot between guards. Only
+                # that exact observed notice permits one navigation retry.
+                # Any creation intent still requires fresh journal reconciliation.
+                if attempt or not self.dismiss_upload_error():
+                    raise
         self.guard(project=True)
         return {"target": target, "evidence_directory": str(self.output)}
