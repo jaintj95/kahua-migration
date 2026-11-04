@@ -1,5 +1,41 @@
 # PlanGrid to Kahua migration
 
+This repository contains two independent workflows for the same migration
+project. They share project guidance and handover records, but have separate
+entry points, dependencies, and run state. Keeping them together makes one
+repository the source for migration work without requiring either runtime to
+install the other.
+
+| Workflow | Source and entry point | Runtime | Guide |
+| --- | --- | --- | --- |
+| Drawings | `kahua_migration/`; `python -m kahua_migration browser migrate` | Python 3.10+ and Playwright | [AUTOMATIC_RUN.md](AUTOMATIC_RUN.md) |
+| Documents and photos | `scripts/windows-local-sync/`; `Invoke-KahuaSyncBatch.ps1` | Windows PowerShell 5.1 and Kahua for Windows | [LOCAL_FILE_SYNC.md](LOCAL_FILE_SYNC.md) |
+
+For **documents and photos**, see [LOCAL_FILE_SYNC.md](LOCAL_FILE_SYNC.md).
+The PowerShell CSV runner selects existing projects, controls Local Files Sync,
+and verifies downloaded originals by SHA-256 before checking sync is off.
+See the runbook for prerequisites and current validation limits, and
+[KAHUA_WINDOWS_HANDOVER.md](KAHUA_WINDOWS_HANDOVER.md) for the issue register,
+responsibility boundaries, and risk ratings. Unattended batch operation is
+currently rated **High risk**. The drawing workflow below remains separate.
+
+Windows commands run from the repository root, for example:
+
+```powershell
+.\scripts\windows-local-sync\Invoke-KahuaSyncBatch.ps1 `
+  -CsvPath C:\Migration\projects.csv `
+  -StateRoot C:\Migration\runs\documents-batch `
+  -Mode Plan
+```
+
+Plan stages and checks the local inputs. Follow the Windows runbook before
+Check or Execute. The Windows fixture workflow runs separately in GitHub
+Actions, without Kahua access; its results do not establish live upload safety.
+Source archives, downloaded originals, journals, session logs, and credentials
+remain local and are excluded from source control.
+
+## Drawing workflow
+
 For the CSV-driven project queue, start with [AUTOMATIC_RUN.md](AUTOMATIC_RUN.md).
 Run `browser migrate` to read the CSV, find or create the named projects and
 folders, and process all version sets without selecting destinations manually.
@@ -11,7 +47,7 @@ This implementation is on `main`. The previous manual
 version is preserved at `manual-pilot-v0.1.0`, with its instructions in
 [MANUAL_RUN.md](MANUAL_RUN.md).
 
-The chosen route is **browser automation**. Files go directly from the local disk to Kahua, without API credentials, middleware transfers, Finder automation, or paid model calls. The source auditor, per-sheet revision calculation, durable journal, browser controls and verification code are implemented.
+The chosen route for drawings is **browser automation**. Files go directly from the local disk to Kahua, without API credentials, middleware transfers, Finder automation, or paid model calls. The source auditor, per-sheet revision calculation, durable journal, browser controls and verification code are implemented.
 
 The automatic worker completed live calibration for **five PDF revisions,
 four batches and two CSV destinations**. It created the missing test project

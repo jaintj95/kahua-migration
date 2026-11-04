@@ -1,0 +1,10 @@
+{
+  "domain": "YOUR DOMAIN",
+  "project_number": "EXACT PROJECT NUMBER",
+  "project_name": "EXACT PROJECT NAME",
+  "source_zip": "C:\\Migration\\Downloads\\project.zip",
+  "source_prefix": "Exact top-level folder in ZIP",
+  "sync_root": "C:\\Users\\YourUser\\Kahua - YOUR DOMAIN\\EXACT PROJECT NAME",
+  "state_root": "C:\\Migration\\runs\\unique-project-run",
+  "destination_confirmed": false
+}

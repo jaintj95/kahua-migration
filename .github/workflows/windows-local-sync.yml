@@ -1,0 +1,47 @@
+name: Windows Local Files fixtures
+
+on:
+  push:
+    branches: [main, 'codex/**']
+    paths:
+      - 'scripts/windows-local-sync/**'
+      - '.github/workflows/windows-local-sync.yml'
+  pull_request:
+    paths:
+      - 'scripts/windows-local-sync/**'
+      - '.github/workflows/windows-local-sync.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fixtures:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: powershell
+        working-directory: scripts/windows-local-sync
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Parse Windows PowerShell scripts
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = Get-ChildItem -File | Where-Object Extension -in '.ps1', '.psm1'
+          foreach ($file in $files) {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName, [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          }
+          Write-Host "Parsed $($files.Count) scripts in PowerShell $($PSVersionTable.PSVersion)."
+      # Fixtures use temporary local files and simulated UI/server modules.
+      # They never sign in to Kahua or invoke the real desktop controller.
+      - name: Check local copy behavior
+        run: .\Test-KahuaLocalSync.ps1
+      - name: Check CSV and independent download validation
+        run: .\Test-KahuaSyncBatch.ps1
+      - name: Check coordinator with simulated Kahua
+        run: .\Test-KahuaSyncCoordinator.ps1

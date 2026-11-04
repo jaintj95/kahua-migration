@@ -26,6 +26,7 @@ conversation_logs/
 conversations/
 rollouts/
 sessions/
+session-logs/
 archived_sessions/
 *.log
 *.jsonl
@@ -36,3 +37,5 @@ archived_sessions/
 /pilot/
 /'CNZ243 - PIN 133633.00 - Bradley Co - SR74 Drainage Improvements (ARPA)/
 /manual-run/
+local-sync.local.json
+local-sync-projects.local.csv
