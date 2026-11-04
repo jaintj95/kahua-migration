@@ -1,6 +1,6 @@
 # PlanGrid to Kahua migration
 
-This repository contains two independent workflows for the same migration
+This repository contains separate workflows for the same migration
 project. They share project guidance and handover records, but have separate
 entry points, dependencies, and run state. Keeping them together makes one
 repository the source for migration work without requiring either runtime to
@@ -9,7 +9,15 @@ install the other.
 | Workflow | Source and entry point | Runtime | Guide |
 | --- | --- | --- | --- |
 | Drawings | `kahua_migration/`; `python -m kahua_migration browser migrate` | Python 3.10+ and Playwright | [AUTOMATIC_RUN.md](AUTOMATIC_RUN.md) |
+| Project sync flags only | `scripts/windows-local-sync/`; `Invoke-KahuaSyncFlags.ps1` | Windows PowerShell 5.1 and Kahua for Windows | [SYNC_FLAGS.md](SYNC_FLAGS.md) |
 | Documents and photos | `scripts/windows-local-sync/`; `Invoke-KahuaSyncBatch.ps1` | Windows PowerShell 5.1 and Kahua for Windows | [LOCAL_FILE_SYNC.md](LOCAL_FILE_SYNC.md) |
+
+For **Doe's simpler flag workflow**, use [SYNC_FLAGS.md](SYNC_FLAGS.md). It reads
+exact project names, sets each project's own Folders switch to the requested
+boolean, and verifies the saved setting. Doe places the files and Kahua handles
+the transfers. Five live project reads passed, and Seattle completed a saved
+Disable/Enable cycle after the Save wait was corrected. The guide records the
+50 passing simulated scenarios, exact-name CSV correction, and pilot limits.
 
 For **documents and photos**, see [LOCAL_FILE_SYNC.md](LOCAL_FILE_SYNC.md).
 The PowerShell CSV runner selects existing projects, controls Local Files Sync,
@@ -19,7 +27,17 @@ See the runbook for prerequisites and current validation limits, and
 responsibility boundaries, and risk ratings. Unattended batch operation is
 currently rated **High risk**. The drawing workflow below remains separate.
 
-Windows commands run from the repository root, for example:
+Windows commands run from the repository root. Plan the sync-flag workflow:
+
+```powershell
+.\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1 `
+  -CsvPath C:\Migration\sameProjectsEnableSync.csv `
+  -Environment DEVPRODUCTION -Action Enable -Mode Plan `
+  -StateRoot C:\Migration\runs\enable-project-sync
+```
+
+Follow [SYNC_FLAGS.md](SYNC_FLAGS.md) for Check, Enable, Disable, and per-row
+boolean values. For the full documents/photos workflow, plan with:
 
 ```powershell
 .\scripts\windows-local-sync\Invoke-KahuaSyncBatch.ps1 `
@@ -28,7 +46,7 @@ Windows commands run from the repository root, for example:
   -Mode Plan
 ```
 
-Plan stages and checks the local inputs. Follow the Windows runbook before
+The full workflow's Plan stages and checks the local inputs. Follow its runbook before
 Check or Execute. The Windows fixture workflow runs separately in GitHub
 Actions, without Kahua access; its results do not establish live upload safety.
 Source archives, downloaded originals, journals, session logs, and credentials

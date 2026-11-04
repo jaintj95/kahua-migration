@@ -1,0 +1,216 @@
+# Enable or disable sync for a CSV of Kahua projects
+
+Use `scripts/windows-local-sync/Invoke-KahuaSyncFlags.ps1` for Doe's simpler
+workflow. It searches for each exact `project_name`, opens that project, sets
+its **Local Files > Folders** switch, saves when needed, then closes and reopens
+settings to verify the saved value.
+
+The switch applies to that project's file directory. Documents, Photos, and
+other content placed there are included by Kahua. The script does not select
+parent or child projects or toggle their switches. It does not drill into
+individual file folders. Kahua documents the project-level Folders switch in
+[Using Local Files Sync](https://help.kahua.com/main/Content/4-DocumentationMngmt/File-Manager/local-files-sync.htm).
+
+Doe extracts and places the files. Kahua performs the sync. This runner only
+changes and verifies the flag; `flags-verified` **does not mean that files have
+finished uploading**. Enabling leaves the flag on. Disabling is a separate run
+after the operator checks transfer completion. Never remove local content while
+it is still selected for sync: Kahua can propagate local deletions to the server.
+
+## Prepare the desktop
+
+- Run on Windows with Windows PowerShell 5.1 and Kahua for Windows. A Cloud PC
+  is optional; an appropriate Windows computer with Kahua installed is enough.
+- Sign in manually. If the CSV supplies `domain`, the runner selects that exact
+  domain before searching projects. If `domain` is absent or blank for every
+  row, Doe selects the domain first and the runner reads that selection.
+  The environment is always checked. Use one domain per batch.
+- Keep one Kahua window open, maximized and unlocked, and reserve the desktop
+  while the runner works. Close existing dialogs and unsaved settings.
+- Under **My settings > General**, enable **Show Project Number**. The CSV
+  still needs only project names. The runner derives the displayed number to
+  distinguish the complete project name from a similar name or numeric prefix.
+- Also enable **Enable Full Navigation Breadcrumb** so the runner can verify
+  the selected domain while working inside a project.
+- Configure **My settings > Local Files > Enable** once if necessary. Review
+  and resume a paused account before enabling any project. The runner does not
+  click account Enable, Resume, Pause, or Reset. It can disable a project's flag
+  while the account is paused.
+- Keep all four runtime files together: `Invoke-KahuaSyncFlags.ps1`,
+  `KahuaSyncFlags.psm1`, `KahuaSyncFlagDesktop.psm1`, and `KahuaDesktop.psm1`.
+  No Python, Playwright, ZIP, project UID, or source-file manifest is needed.
+
+## CSV
+
+**Before using Doe's five-project test CSV:** change `222 - Bellevue Park` to
+Kahua's exact name, `221 - Bellevue Park`, in a reviewed copy. The original
+file was preserved during testing. Use a new state directory for the corrected
+input if the original CSV was already planned or checked.
+
+Doe's supplied format works unchanged with `-Action Enable` or `-Action Disable`:
+
+```csv
+domain,project_name,project_uid
+Onindus,220 - Seattle Heights,aaa-111
+Onindus,777-Warehouse Building,bbb-222
+```
+
+Only `domain` and `project_name` identify the requested destination.
+`project_uid` is ignored; the sample IDs are placeholders. If Doe supplies only
+`project_name`, the runner uses the domain already selected in Kahua. Optional
+`-Domain Onindus` adds a check against Doe's selection; it does not request a
+switch. Fill `domain` on every row to request automatic selection. Partially
+filled domain columns are rejected.
+
+For different values in one batch, use `-Action FromCsv` with:
+
+```csv
+domain,project_name,sync_enabled
+Onindus,220 - Seattle Heights,true
+Onindus,777-Warehouse Building,false
+```
+
+`true` means enable and `false` means disable. Values such as `yes`, `1`, blank,
+or a value conflicting with `-Action` are rejected. Use UTF-8 CSV and quote names
+that contain commas. Keep exact spelling and case. Duplicate names, mixed
+domains, and unsupported Windows directory names are rejected before any
+desktop action. A duplicate exact name in Kahua also stops the run; the script
+does not guess based on folder location or a placeholder UID.
+
+## Run
+
+Commands below run from the repository root. Set `Environment` to the exact
+label on the Kahua window; **DEVPRODUCTION** is the test environment, not an
+assumed production destination. Keep state outside every Kahua sync directory.
+
+Plan the supplied CSV without touching Kahua:
+
+```powershell
+.\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1 `
+  -CsvPath C:\Migration\sameProjectsEnableSync.csv `
+  -Environment DEVPRODUCTION -Action Enable -Mode Plan `
+  -StateRoot C:\Migration\runs\enable-20261104
+```
+
+Search all projects and read their current flags without changing them:
+
+```powershell
+.\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1 `
+  -CsvPath C:\Migration\sameProjectsEnableSync.csv `
+  -Environment DEVPRODUCTION -Action Enable -Mode Check `
+  -StateRoot C:\Migration\runs\enable-20261104
+```
+
+After Check succeeds, enable:
+
+```powershell
+.\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1 `
+  -CsvPath C:\Migration\sameProjectsEnableSync.csv `
+  -Environment DEVPRODUCTION -Action Enable -Mode Execute `
+  -StateRoot C:\Migration\runs\enable-20261104
+```
+
+Once the operator has verified that Kahua finished syncing, disable using the
+same CSV and a **new state directory** for the opposite action:
+
+```powershell
+.\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1 `
+  -CsvPath C:\Migration\sameProjectsEnableSync.csv `
+  -Environment DEVPRODUCTION -Action Disable -Mode Execute `
+  -StateRoot C:\Migration\runs\disable-20261104
+```
+
+For a `sync_enabled` CSV, use `-Action FromCsv`. Plan is the default mode when
+`-Mode` is omitted; a mode must be changed to Execute before flags are written.
+
+## Results and recovery
+
+Each attempt writes `StateRoot\attempts\<attempt>\result.json`, including the
+requested value, exact project identity, reopened flag readback, account sync
+state, and derived local directory. `binding.json` binds the state directory to
+the requested projects and values. `selected-domain.json` also binds the actual
+domain read from Kahua, including when Doe selected it manually. A later resume
+in another domain stops before project lookup. Old attempt files are retained.
+
+The runner checks every project's identity and current flag before the first
+flag change. It returns to Home and uses **Select a Project > Search** for each
+lookup, including projects in nested partitions. It rejects scrollable, capped,
+or ambiguous result lists because their visible rows alone cannot prove that
+the name is unique.
+
+After changing a flag, the runner waits for Folders to become available and
+for Save and Cancel to stay disabled while Close is available. It then closes
+and reopens settings to read the saved value. A temporarily disabled Folders
+control during Save is treated as pending, never as a completed save. An
+Unsaved Changes Alert stops the run and remains open for inspection.
+
+On a failure, the queue stops. An error during Save or readback marks that row
+`uncertain`, with the error retained in the report. Previously verified rows
+remain recorded. Close or resolve the failed dialog, then rerun the same CSV,
+action and state directory. The runner freshly reads the current state before
+setting it; it does not blindly toggle the switch or trust an old success.
+Do not delete state to retry. A changed CSV or opposite action needs new state.
+
+The runner and the full migration worker share a desktop mutex and must not run
+at the same time. It never copies, moves, deletes, downloads, hashes, or cleans
+up project files and never claims to diagnose Kahua's transfer mechanism.
+
+## Validation and current limits
+
+- Doe's five-row CSV passed Plan for both Enable and Disable.
+- The suite passes 50 scenarios under local PowerShell 7.6.9 and Windows
+  PowerShell 5.1, covering input validation, strict boolean
+  handling, exact-name matching, preflight, reruns, Disable, uncertain saves,
+  mismatched receipts, state locking, partial selections, paused accounts, and
+  the real setter's Save/readback decisions, asynchronous search refresh, and
+  refusal of ambiguous or incomplete search results, transient disabled
+  controls during Save, unsettled saves, and late unsaved-change warnings.
+  These fixtures use a simulated desktop; live observations are recorded
+  separately below.
+- All 12 PowerShell source/test files parse locally. The Windows PowerShell 5.1
+  CI workflow runs the flag suite alongside the existing copy, batch, and
+  coordinator fixtures. See [Windows fixture runs](https://github.com/jaintj95/kahua-migration/actions/workflows/windows-local-sync.yml)
+  for the result at a particular published commit.
+- **Supervised flag pilot passed November 5.** The upgraded Cloud PC connected
+  successfully with 4 vCPUs / 16 GB RAM. All five projects passed a live
+  read-only Check, including nested projects, using a separate corrected CSV.
+  Doe's original CSV says
+  `222 - Bellevue Park`; Kahua shows `221 - Bellevue Park`. The original CSV
+  was preserved and its exact-name mismatch stopped the earlier Check.
+- Seattle completed both real transitions with the corrected runner:
+  On to Off at **02:02:01 IST**, then Off to On at **02:03:11 IST on November 5**.
+  Both runs returned `flags-verified` with `changed: true` and `reopened: true`.
+  Seattle was restored to its original **On** state. The other four projects
+  were only read, not enabled or disabled by the pilot.
+- A final five-project Check completed at **02:04:49 IST on November 5**:
+  Seattle On; Warehouse, Bellevue, 123Test and 456 Off. Every receipt confirmed
+  a reopened read. No migration worker remained running, and the remote
+  connection was released after saving the handover record.
+- Earlier failed attempts remain recorded. The first Disable stopped during
+  close with an Unsaved Changes Alert even though Off persisted. The first
+  Enable stopped because the Save waiter rejected a temporarily disabled
+  Folders control, even though On persisted. After independent reopened reads,
+  both runs resumed without another toggle or Save. The new waiter requires a
+  stable completed state before closing and explicitly stops on a late warning.
+  This corrects the tested automation timing cases; it does not prove that
+  Kahua can never show another warning or that its internal sync is repaired.
+- Domain initialization passed for both an explicit Onindus CSV domain and
+  the already-selected domain. Switching to a different domain has not been
+  exercised. Duplicate-name and search-completeness guards deliberately stop
+  when the UI does not provide enough evidence.
+- Live writes were tested on Seattle only. Five successful project lookups do
+  not establish unattended operation or 100-200-project capacity.
+- The shared desktop helper still has unresolved startup rectangle-read errors
+  (`Width` and `IsEmpty`) from earlier supervised sessions. They stop the
+  operation; the new flag runner does not claim to fix them.
+
+Run fixtures without Kahua access:
+
+```powershell
+.\scripts\windows-local-sync\Test-KahuaSyncFlags.ps1
+```
+
+The historical [Windows handover](KAHUA_WINDOWS_HANDOVER.md) records known
+client/UI and sync problems. The previous full migration runner remains
+available in [LOCAL_FILE_SYNC.md](LOCAL_FILE_SYNC.md), with its own state and
+validation requirements.

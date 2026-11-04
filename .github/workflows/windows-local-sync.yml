@@ -45,3 +45,5 @@ jobs:
         run: .\Test-KahuaSyncBatch.ps1
       - name: Check coordinator with simulated Kahua
         run: .\Test-KahuaSyncCoordinator.ps1
+      - name: Check project sync flags with simulated Kahua
+        run: .\Test-KahuaSyncFlags.ps1

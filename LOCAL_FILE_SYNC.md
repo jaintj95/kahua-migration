@@ -1,5 +1,9 @@
 # Upload documents and photos through Kahua local sync
 
+For the simpler CSV workflow that only enables/disables each project's own sync
+flag, see [SYNC_FLAGS.md](SYNC_FLAGS.md). The runner described below additionally
+stages ZIPs, copies files and verifies downloaded originals.
+
 `scripts/windows-local-sync/Invoke-KahuaSyncBatch.ps1` processes a CSV of existing Kahua projects.
 It stages each ZIP, selects projects through the Windows desktop UI, reconciles
 existing files through original-file downloads, copies missing content through

@@ -1,6 +1,6 @@
 # Kahua Windows automation handover and risk register
 
-Status as of November 3, 2026: **supervised pilot only; full Execute validation is incomplete**.
+Updated November 5, 2026: **supervised flag pilot passed; full file-migration Execute validation is incomplete**.
 
 **Overall remaining risk is High for unattended or 100–200-project operation.**
 Kahua File Manager has repeatedly failed during both manual and automated
@@ -15,6 +15,38 @@ This handover covers the Windows documents and photos workflow in
 was `1.9.56.393`; later troubleshooting used `1.9.56.438`. Drawings use a
 separate browser workflow. Running commands and recovery steps are in
 [LOCAL_FILE_SYNC.md](LOCAL_FILE_SYNC.md).
+
+The newer [project flag runner](SYNC_FLAGS.md) has a narrower purpose: it sets
+the named project's own Folders switch, including whatever content Doe places
+in that directory. It verifies the setting, not completed transfers. It does
+not select parent or child projects. Its 50 simulated scenarios passed locally
+and in Windows PowerShell 5.1. After the Cloud PC upgrade to 4 vCPUs / 16 GB,
+all five projects passed a live read-only Check, including nested projects.
+A separate test CSV corrected `222 - Bellevue Park` to Kahua's exact name
+`221 - Bellevue Park`; Doe's original CSV is preserved.
+
+After the user returned VM access, the corrected runner completed Seattle
+**On to Off at 02:02:01 IST, then Off to On at 02:03:11 IST on November 5**.
+Both runs saved, closed, reopened, and returned `flags-verified`. Seattle is
+restored to its original On setting. The runner now waits for Folders to
+become available and Save/Cancel to stay inactive before closing settings.
+
+Two earlier attempts remain failed in their original reports. Disable
+`20261104T172739Z-80beaea1` stopped during close with an Unsaved Changes Alert,
+but an independent reopened read confirmed Off at 23:04:27 IST on November 4.
+Enable `20261104T202355Z-d085bd7b` stopped when its waiter rejected the
+temporarily disabled Folders control, but a reopened read confirmed On at
+01:57:42 IST on November 5. Resuming each saved run read the persisted value
+and made no further toggle or Save. The prior user-requested pause and its
+Off readback remain in `sync-flags-20261104\handoff-20261104-230427.json`;
+they are historical, not the final On state.
+The final five-project read-only Check completed at **02:04:49 IST on
+November 5**, confirming Seattle On and the other four Off. Zero migration
+workers were confirmed, and the remote connection was released. The completed
+record is `sync-flags-20261104\handoff-20261105-completed.json`.
+Existing transfer and session risks remain relevant; the simpler scope does
+not repair Kahua's internal synchronization mechanism. This flag-only test
+does not establish that the VM upgrade resolved earlier File Manager errors.
 
 ## What is verified
 
@@ -205,6 +237,10 @@ staging, synced files, journal, and diagnostics. Reconcile server bytes and
 verify saved off before cleanup. The 18:30 off receipt is specific to this
 project and time, not blanket clearance for other projects or later activity.
 
+For the separate flag runner, `flags-verified` means the requested boolean was
+saved. Enable intentionally leaves the selected project On; it is not cleanup
+clearance. The November 5 Seattle pilot restored On, its original setting.
+
 ### K06 Desktop controls change and load asynchronously
 
 The update changed how the Account domain and drawer controls were exposed.
@@ -214,6 +250,16 @@ the drawer, transient search results, delayed filter choices, and cached Local
 Files rows while its root was loading. Invoke actions sometimes left a popup
 open or failed to open Download's Save As dialog. The native filename field
 did not support the value-reading method initially used.
+
+The November 4 flag pilot also showed an Unsaved Changes Alert after Save,
+despite a later reopened read confirming Off. During the November 5 retry,
+Folders was temporarily disabled while Save completed. A single disabled Save
+sample was insufficient to decide when to close, and the first replacement
+waiter incorrectly rejected the disabled Folders control. These were automation
+timing assumptions; the evidence does not establish a Kahua persistence defect.
+The corrected flag waiter passed an actual Disable and Enable cycle with
+reopened receipts. A future alert still stops the runner without automatically
+discarding or saving again. This fix is scoped to the new flag adapter.
 
 **Risk and control:** clicks can target the wrong surface, or operations can
 fail despite a control being present. Current code scopes modals, deduplicates
@@ -302,7 +348,12 @@ still pending.
 | Selected the main window Close control while testing the Account drawer | Closed Kahua and required sign-in again. Corrected the drawer target, hit testing, and post-close window check. No upload occurred in that retry. | Medium |
 | Used stale or ambiguous accessibility objects and an incorrect comparison API | Element-not-available or wrong-target failures. Added modal scoping, runtime-ID deduplication, fresh lookup, correct native comparison, and bounded waits. | Medium |
 | Initial post-reboot control read had no `Width` property | The first diagnostic stopped before file work. Repeating after manual project selection passed; the startup reader failure has not been independently fixed. | Medium supervised; High unattended |
+| November 4 pre-upgrade project-selection read had no `IsEmpty` property | The pre-upgrade settings check stopped before selecting Seattle or changing sync. The windowed view had first clipped the environment label; maximizing cleared that visibility issue, but the rectangle-read failure remains unresolved in the shared desktop helper. | Medium supervised; High unattended |
 | Assumed Invoke and immediate child-control availability were sufficient | Filter/search/folder/download actions failed or lagged. Added verified clicks, popup closure checks, and waits for refreshed controls. | Medium |
+| Forced a nested module reload in the new flag adapter | Removed reporting helpers already imported by the coordinator. Removed the nested `-Force`; the helper-availability regression and 50-scenario suite passed in Windows PowerShell 5.1. | Low for the tested import order |
+| Used a narrow selected-project picker for flag search | The picker could open outside the usable viewport. The flag runner now searches from Home; the corrected five-project Check included nested partitions. | Medium on untested layouts |
+| Treated one disabled Save sample as completion | Close raised an Unsaved Changes Alert even though the selection later read back Off. Added a stable Save/Cancel/Close wait and explicit warning detection; the original failed report is retained. | Medium supervised; new warnings stop the queue |
+| Save waiter rejected temporarily disabled Folders | The first Enable attempt stopped after Save had persisted On. The waiter now treats disabled Folders as pending while mutation still requires an enabled control. Real On-to-Off and Off-to-On runs passed with reopened receipts; recovery also avoided a repeated Save. | Low for the tested timing case; Medium on new client builds |
 | Assumed the native Save As field exposed a value pattern | Could not verify or set the intended save path reliably. Added native text readback and exact filename/destination verification. | Medium |
 | Windows short path aliases could defeat the staging/sync overlap check | Staging could be accepted inside sync. Canonicalized existing path ancestors; Windows safety fixtures passed. | Low for tested cases |
 | PowerShell converted a null journal-replacement argument to an empty path | Atomic journal replacement failed in testing. Corrected the null argument representation; journal fixtures passed. | Low for tested cases |
@@ -322,6 +373,7 @@ portable summary; full live run files and the log snapshot remain on the VM.
 | Pre-reboot failed Execute | Attempt `20261103T125547Z-ff2dbc05`; `resume-guarded-20261103-182546.txt` |
 | Successful post-reboot short check | `post-reboot-smoke-20261103-190908`: result, setup readback, sample manifest, original downloads, verification, and 46 resource samples |
 | Post-reboot startup reader failure | `post-reboot-smoke-20261103-190503`: failed before file operations with missing `Width` property |
+| Pre-upgrade preservation record | `pre-upgrade-20261104-194817.json`: idle worker and free state lock, preserved CSV/state/source inventory; no fresh Seattle saved-off verification because the selection reader stopped |
 | Latest failed Execute | Attempt `20261103T134526Z-f8a1ed73`; `resume-post-reboot-20261103-191525.txt`; project journal records `HU-917543` and failed server checking |
 | Pre-reboot saved-off readback | `final-restored-sync-off.json`, verified at `2026-11-03T13:00:02.6210244Z` |
 | Latest saved-off readback | `post-reboot-final-sync-off.json`, verified at `2026-11-03T13:50:06.3510009Z`; both selections off after reopening |
@@ -329,6 +381,12 @@ portable summary; full live run files and the log snapshot remain on the VM.
 | Final deployment checks | `final-script-validation.json`, eight matching hashes and no parse errors |
 | Sync transport failure excerpt | `sync-error-evidence-20261103.json`; five matching log lines, including 3275–3278 |
 | Preserved sync log | `FileSync-handover-20261103T130524Z.Log`, captured `2026-11-03T13:05:24.3164733Z`, 449651 bytes |
+| Failed flag Disable and recovery | `sync-flags-20261104\state-seattle-disable\attempts`; original `20261104T172739Z-80beaea1` is still failed, with separate later readbacks and successful attempts |
+| Failed flag Enable and recovery | `sync-flags-20261104\state-seattle-enable\attempts`; failed `20261104T202355Z-d085bd7b`, then no-change recovery `20261104T203042Z-c68caca7` |
+| Successful flag Disable transition | `sync-flags-20261104\state-seattle-disable\attempts\20261104T203131Z-7c713f6e\result.json`; On to Off, saved and reopened |
+| Successful flag Enable restoration | `sync-flags-20261104\state-seattle-enable\attempts\20261104T203241Z-ef26ed56\result.json`; Off to On, saved and reopened |
+| Final five-project flag Check | `sync-flags-20261104\state-five-corrected-check\attempts\20261104T203346Z-9031f1d9\result.json`; all five reopened, Seattle On and other four Off |
+| Completed flag handover | `sync-flags-20261104\handoff-20261105-completed.json`; parsed readback, source hashes, transition and recovery reports, final Check, 50 Windows fixture scenarios, and zero workers |
 
 The saved log snapshot's SHA-256 was read back and verified:
 `d0f566be1b5cdaab266bccafcc4a7658f621214d93cc9d2bdb30f4b630d6e5ca`.
@@ -337,7 +395,11 @@ Its source was the DEVPRODUCTION package's
 The live log remained open and continued growing; the checksum identifies the
 saved snapshot, not the subsequently changing live file.
 
-## Conditions for a final operational handover
+## Conditions for a full file-migration operational handover
+
+These conditions apply to the older worker that copies and verifies files.
+The narrower flag runner has a completed supervised flag pilot, with transfer
+verification left to the operator as described in [SYNC_FLAGS.md](SYNC_FLAGS.md).
 
 1. Investigate K01 and K02 using Kahua/connection evidence and a controlled
    capacity comparison. Prove live recovery and reconciliation; temporary
