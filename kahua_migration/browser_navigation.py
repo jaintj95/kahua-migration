@@ -2,6 +2,8 @@
 
 from pathlib import Path
 from urllib.parse import urlsplit
+from copy import deepcopy
+import json
 import math
 import time
 
@@ -10,7 +12,7 @@ from .browser_auth import AuthenticationRequired, needs_sign_in
 from .browser_grid import GridWalker, read_table_rows
 from .browser_visual import click_text, recognize, text_center
 from .csv_config import validate_destination
-from .preflight import atomic_json, digest
+from .preflight import atomic_json, digest, exact_text
 from .journal import now
 
 
@@ -22,9 +24,11 @@ def column(row, number):
 
 
 def match_project(rows, number, name):
-    matches = [r for r in rows if column(r, 2) == number and column(r, 3) == name]
+    matches = [r for r in rows if column(r, 3) == name and (number is None or column(r, 2) == number)]
     if len(matches) > 1:
-        raise BrowserError("More than one project has the exact requested number and name")
+        scope = "name" if number is None else "number and name"
+        raise BrowserError(f"More than one project has the exact requested {scope}: {name!r}. "
+                           "Resolve the duplicate projects in the selected Kahua domain before retrying.")
     return matches[0] if matches else None
 
 
@@ -137,11 +141,17 @@ class DestinationNavigator:
         walker = GridWalker(self.page, table, self.guard)
         rows = walker.scan_to_end(lambda: read_table_rows(table), lambda r: (column(r, 2), column(r, 3)))
         self.evidence("project-search", {"query": self.target["project_name"], "rows": rows})
-        row = match_project(rows, self.target["project_number"], self.target["project_name"])
+        number = None if self.target.get("project_lookup") == "unique_name" else self.target["project_number"]
+        row = match_project(rows, number, self.target["project_name"])
         if row:
+            # Resolve the number from the actual unique row, not from queue
+            # order, the export entity ID, or a guessed prefix in the name.
+            observed_number = column(row, 2)
+            exact_text(observed_number, "Kahua project number in Project Finder")
             fresh = walker.seek(lambda: read_table_rows(table), lambda r: (column(r, 2), column(r, 3)),
-                                (self.target["project_number"], self.target["project_name"]),
+                                (observed_number, self.target["project_name"]),
                                 row.get("absolute_row", row["grid_row"]))
+            self.target["project_number"] = observed_number
             cell = table.locator(f'[role="gridcell"][aria-rowindex="{fresh["grid_row"]}"][aria-colindex="3"]')
             self.ui._canvas_click(cell, double=True)
             self.wait(lambda: self.page.get_by_role("button", name=f"Current Project {self.target['project_number']} - {self.target['project_name']}", exact=True).count() == 1,
@@ -174,7 +184,16 @@ class DestinationNavigator:
         self.page.get_by_role("option", name=self.target["record_type"], exact=True).wait_for(state="attached", timeout=10000)
         self.control("option", self.target["record_type"]).press("Enter")
         name = self.enter(self.control("textbox", "Name"), self.target["project_name"], name="Name", point=(730, 590))
-        number = self.enter(self.control("textbox", "Number"), self.target["project_number"], name="Number", point=(920, 667))
+        if self.target.get("project_lookup") == "unique_name":
+            # Preserve Kahua's own numbering for a new project. The exported
+            # CSV has no project number, and project_sequence is not one.
+            number = self.control("textbox", "Number")
+            if not number.input_value():
+                raise BrowserError("Kahua did not supply a number for the new project. "
+                                   "Create this project in Kahua or configure its automatic numbering, then retry. "
+                                   "No project was saved; no extra CSV column is required.")
+        else:
+            number = self.enter(self.control("textbox", "Number"), self.target["project_number"], name="Number", point=(920, 667))
         # Uno exposes an empty input behind this selected-value control.
         # Independently read the displayed value in its own field before Save.
         selected_type = recognize(self.page, self.ocr, self.output / "project-record-type.png",
@@ -182,28 +201,55 @@ class DestinationNavigator:
         text_center(selected_type, self.target["record_type"])
         path = self.evidence("project-precommit", {"specification": spec, "name": name.input_value(), "number": number.input_value(), "record_type": self.target["record_type"]})
         save = self.control("button", "Save")
-        self.journal.begin_destination(key, spec, {"evidence_path": path})
+        expect(save).to_be_enabled(timeout=10000)
+        self.journal.begin_destination(key, spec, {"evidence_path": path, "intended_number": number.input_value()})
         save.press("Enter")
         self.wait(lambda: self.page.get_by_role("checkbox", name="Create Blank Project", exact=True).count() == 0
                   and self.page.get_by_role("textbox", name="Name", exact=True).count() == 0, "Project creation did not finish", 120)
 
     def ensure_project(self):
         spec = {k: self.target.get(k) for k in ("environment", "domain_name", "project_number", "project_name", "record_type")}
-        key = digest(["project", self.target["environment"], self.target["domain_name"], self.target["project_number"], self.target["project_name"]])
+        automatic = self.target.get("project_lookup") == "unique_name"
+        if automatic:
+            # This specification stays stable across runs even though the
+            # actual number is only known after opening Project Finder.
+            spec["project_number"] = None
+            spec.update({k: self.target.get(k) for k in ("project_lookup", "source_project_uid", "export_project_entity_id")})
+            key = digest(["project-by-name", spec])
+        else:
+            key = digest(["project", self.target["environment"], self.target["domain_name"], self.target["project_number"], self.target["project_name"]])
         prior = self.journal.destination(key, spec)
         found = self.find_project()
         if not found:
             if prior and prior["status"] != "cancelled_before_action":
                 raise BrowserError("A previously attempted project creation is not found; refusing to repeat Save")
             if self.target.get("project_policy", "existing_only") != "find_or_create":
-                raise BrowserError("The mapped project is missing and creation is disabled")
+                raise BrowserError(f"Project {self.target['project_name']!r} was not found in Kahua domain "
+                                   f"{self.target['domain_name']!r}, and creation is disabled. "
+                                   "Check the domain, project name and account access.")
+            if automatic and self.target.get("export_project_entity_id"):
+                raise BrowserError("The CSV identifies an existing Kahua project, but its exact name was not found. "
+                                   "Check the environment, domain and project access; refusing to create a replacement.")
             self.create_project(key, spec)
+            prior = self.journal.destination(key, spec)
             found = self.find_project()
             if not found:
                 raise BrowserError("Created project cannot be independently found; creation remains pending")
+        observed = {**spec, "project_number": column(found, 2), "project_name": column(found, 3)}
+        if automatic:
+            exact_text(observed["project_number"], "Kahua project number in Project Finder")
+            if prior:
+                receipt = json.loads(prior["evidence"])
+                pinned = receipt.get("observed_identity", {})
+                expected_number = pinned.get("project_number") or receipt.get("intended_number")
+                if (expected_number and expected_number != observed["project_number"]
+                        or pinned.get("project_name", observed["project_name"]) != observed["project_name"]):
+                    raise BrowserError("The resolved Kahua project differs from the identity saved in this journal. "
+                                       "Reconcile the destination before resuming; no folder or upload was changed.")
+            self.target["project_number"] = observed["project_number"]
         self.guard(project=True)
         path = self.evidence("project-confirmed", {"specification": spec, "row": found})
-        self.journal.confirm_destination(key, spec, {"evidence_path": path, "observed_identity": spec})
+        self.journal.confirm_destination(key, spec, {"evidence_path": path, "observed_identity": observed})
 
     def folder_rows(self):
         self.guard(project=True)
@@ -510,7 +556,7 @@ class DestinationNavigator:
         return recovery
 
     def ensure(self, target):
-        self.target = validate_destination(target)
+        self.target = deepcopy(validate_destination(target))
         for attempt in range(2):
             try:
                 self.guard()
@@ -524,4 +570,4 @@ class DestinationNavigator:
                 if attempt or not self.dismiss_upload_error():
                     raise
         self.guard(project=True)
-        return {"target": target, "evidence_directory": str(self.output)}
+        return {"target": self.target, "evidence_directory": str(self.output)}

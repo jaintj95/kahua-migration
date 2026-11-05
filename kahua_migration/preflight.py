@@ -1,7 +1,7 @@
 """Build an auditable upload manifest without contacting Kahua.
 
-The export and explicit mappings are authoritative. Folder/name guesses, PDF
-OCR, and LLM guesses never determine project IDs or revision numbers.
+The export layout and optional explicit mappings are authoritative. PDF OCR
+and LLM guesses never determine project IDs or revision numbers.
 """
 
 from __future__ import annotations
@@ -130,7 +130,7 @@ def audit(version_path, config_path, *, source_root=None):
     if not versions:
         raise InputError("The version-set export is empty")
     from .csv_config import merge_csv_config
-    config = merge_csv_config(config, versions)
+    config = merge_csv_config(config, versions, source_root=source_root)
     issues, projects, records = [], [], []
     files_hashed = {}
 
@@ -186,6 +186,11 @@ def audit(version_path, config_path, *, source_root=None):
         if project_sequences:
             project["project_sequence"] = project_sequences[uid]
         projects.append(project)
+        if binding.get("source_layout"):
+            project["source_layout"] = binding["source_layout"]
+            project["project_clean_name"] = binding.get("project_clean_name")
+        for problem in binding.get("_export_issues", []):
+            issue(problem["code"], problem["message"], uid)
         names = {v["project_name"] for v in project_versions}
         if len(names) != 1:
             issue("PROJECT_NAME_CONFLICT", "One project UID has multiple source names", uid)
@@ -196,6 +201,8 @@ def audit(version_path, config_path, *, source_root=None):
             raise InputError("target.transport must be browser or api")
         required_target = (("environment", "domain_name", "project_number", "project_name", "folder_path")
                            if transport == "browser" else ("environment", "domain_key", "project_number", "folder_path"))
+        if transport == "browser" and target.get("project_lookup") == "unique_name":
+            required_target = tuple(field for field in required_target if field != "project_number")
         for field in required_target:
             if not target.get(field):
                 issue("TARGET_MAPPING_MISSING", f"Set target.{field} explicitly", uid)
@@ -264,7 +271,7 @@ def audit(version_path, config_path, *, source_root=None):
         try:
             local_root = inside(source_root, binding["source_directory"])
             if not local_root.is_dir():
-                raise InputError("Mapped source directory does not exist")
+                raise InputError(f"Project directory does not exist: {local_root}")
             drawing_path = inside(local_root, binding.get("drawing_log"))
             drawing_rows = read_csv(drawing_path, DRAWING_COLUMNS)
             project["drawing_log_sha256"] = hash_once(drawing_path)
@@ -296,7 +303,7 @@ def audit(version_path, config_path, *, source_root=None):
             try:
                 folder = inside(local_root, version_folders.get(bid))
                 if not folder.is_dir():
-                    raise InputError("Mapped version directory does not exist")
+                    raise InputError(f"Version directory does not exist: {folder}")
                 if "current" in {part.casefold() for part in Path(version_folders[bid]).parts}:
                     raise InputError("Current is a derived set and must never be an upload source")
             except InputError as exc:
@@ -319,7 +326,13 @@ def audit(version_path, config_path, *, source_root=None):
                     # Number source occurrences even if an earlier local PDF is missing.
                     # A missing file blocks the project; it must not renumber later rows.
                     occurrences[sheet] += 1
-                    if not row["Description"]:
+                    title = row["Description"]
+                    title_from_sheet = transport == "browser" and not title.strip()
+                    if title_from_sheet:
+                        title = sheet
+                        issue("TITLE_FROM_SHEET_NUMBER", f"Description is blank; using sheet number {sheet!r} as the Kahua title",
+                              uid, bid, sheet, severity="warning")
+                    elif not title:
                         issue("TITLE_MISSING", "Sheet title is blank in the source log", uid, bid, sheet)
                     revision_date = iso_date(row["Date Issued"])
                     path = inside(folder, sheet + ".pdf")
@@ -350,9 +363,11 @@ def audit(version_path, config_path, *, source_root=None):
                     record = dict(operation_key=key, project_uid=uid, version_set_uid=bid,
                                   batch_name=version["version_name"], batch_date=version["batch_date"],
                                   upload_sequence=version["sequence"], sheet_number=sheet,
-                                  title=row["Description"], revision=revision, revision_date=revision_date,
+                                  title=title, revision=revision, revision_date=revision_date,
                                   source_row=row["_row"], source_file=str(path.relative_to(source_root)),
                                   size_bytes=size, sha256=hash_once(path))
+                    if title_from_sheet:
+                        record.update(source_title=row["Description"], title_source="sheet_number")
                     record["fingerprint"] = digest(record)
                     records.append(record)
                     latest[sheet] = record
@@ -402,7 +417,10 @@ def audit(version_path, config_path, *, source_root=None):
                     issue("CURRENT_VERSION_MISMATCH", "Current log does not point to the last occurrence in upload_sequence", uid, sheet=sheet)
                     continue
                 stats["matched_versions"] += 1
-                if row["Date Issued"] != latest_record["revision_date"] or row["Description"] != latest_record["title"]:
+                current_title = row["Description"]
+                if transport == "browser" and not current_title.strip():
+                    current_title = sheet
+                if row["Date Issued"] != latest_record["revision_date"] or current_title != latest_record["title"]:
                     issue("CURRENT_METADATA_MISMATCH", "Current log title/date differs from the selected history row", uid, sheet=sheet)
                 current_pdf = inside(current_folder, sheet + ".pdf")
                 current_files.add(current_pdf)
@@ -428,6 +446,21 @@ def audit(version_path, config_path, *, source_root=None):
                          "TARGET_COLLISION", "REVISION_POLICY_UNCONFIRMED"}
         project["source_ready"] = not any(i["code"] not in mapping_codes for i in errors)
         project["ready_for_upload"] = not errors
+
+    # Exported clean names must not point different projects at the same folder.
+    # Keep legacy explicit shared-source mappings unchanged.
+    source_owners = defaultdict(list)
+    for project in projects:
+        binding = bindings.get(project["project_uid"], {})
+        if binding.get("_source_directory_inferred") and project.get("source_directory"):
+            source_owners[project["source_directory"].casefold()].append(project)
+    for owners in source_owners.values():
+        if len(owners) > 1:
+            uids = [p["project_uid"] for p in owners]
+            for project in owners:
+                issue("SOURCE_DIRECTORY_COLLISION", f"Exported project directory is shared by projects {uids}",
+                      project["project_uid"])
+                project["ready_for_upload"] = project["source_ready"] = False
 
     # Cross-batch aliases can otherwise create multiple Kahua identities for one source sheet.
     spellings = defaultdict(set)
