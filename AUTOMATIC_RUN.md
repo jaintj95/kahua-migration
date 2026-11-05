@@ -291,15 +291,25 @@ original-file integrity reports; a successful process start is not a pass.
 
 ### Override the input parent
 
-To use a different input parent, pass its path on the command line:
+Run from the repository directory and pass the existing export parent with
+`--source-root`. Use the command for your operating system and replace the
+quoted example path with the actual location of your `drawings` directory.
+
+**Windows (PowerShell):**
+
+```powershell
+& .\.venv\Scripts\python.exe -m kahua_migration browser migrate --source-root "D:\Migration\drawings"
+```
+
+**macOS (Terminal):**
 
 ```sh
 .venv/bin/python -m kahua_migration browser migrate \
   --source-root "/path/to/customer drawings"
 ```
 
-On Windows, add `--source-root "D:\Migration\drawings"` to either PowerShell
-command above to select that parent instead.
+The Windows virtual environment uses `.venv\Scripts\python.exe`; the macOS
+virtual environment uses `.venv/bin/python`.
 
 `--source-root` accepts an absolute path or a path relative to the working
 directory and overrides `source_root` in the JSON configuration. The command
