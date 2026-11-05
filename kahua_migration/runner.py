@@ -71,6 +71,8 @@ def build_plan(manifest, project_uids=None):
                          "revision_policy": project["revision_policy"], "revision_start": project["revision_start"],
                          "ready_for_upload": project["ready_for_upload"], "batches": batches,
                          "issues": [i for i in manifest["issues"] if i["project_uid"] == uid]})
+        if "project_sequence" in project:
+            projects[-1]["project_sequence"] = project["project_sequence"]
     return {"manifest_id": manifest["manifest_id"], "mode": "plan_only", "network_requests": 0,
             "revision_rule": "First appearance 1; increment for each later appearance of that sheet",
             "batch_rule": "Upload every file, verify metadata, submit, accept, release, verify batch; then next upload_sequence",

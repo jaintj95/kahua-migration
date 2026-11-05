@@ -8,9 +8,7 @@ pagination has been calibrated; a visible subset is never called complete.
 
 from __future__ import annotations
 
-import json
 import re
-import subprocess
 import time
 from datetime import datetime, timezone
 from math import ceil, floor, isfinite
@@ -124,7 +122,7 @@ class ReadOnlyInspector:
         self.page, self.target = page, target
         self.output = Path(output).resolve()
         self.output.mkdir(parents=True, exist_ok=True)
-        self.ocr_executable = str(Path(ocr_executable).resolve())
+        self.ocr_executable = ocr_executable
         self.ui = object.__new__(BrowserAdapter)
         self.ui.page, self.ui.timeout, self.ui.context = page, 30000, {}
         if page.viewport_size != {"width": 1600, "height": 1000}:
@@ -150,13 +148,7 @@ class ReadOnlyInspector:
         if name.startswith("record-"):
             self._detail_top()
         path = self.output / (name + ".png")
-        self.page.screenshot(path=str(path))
-        run = subprocess.run([self.ocr_executable, str(path)], capture_output=True,
-                             text=True, timeout=30, check=False)
-        if run.returncode:
-            raise BrowserError("Local screenshot text recognition failed")
-        document = json.loads(run.stdout)
-        atomic_json(self.output / (name + ".ocr.json"), document)
+        document = recognize(self.page, self.ocr_executable, path)
         self.evidence.append({"screenshot": str(path), "sha256": file_digest(path)})
         return document
 

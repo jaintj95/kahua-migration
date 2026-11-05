@@ -11,11 +11,87 @@ Kahua API credentials.
 
 ## Prepare the inputs
 
-Use Python 3.10+, Chrome, and the macOS OCR helper described in
-[MANUAL_RUN.md](MANUAL_RUN.md). The worker requires a 1600 × 1000 browser viewport.
+Use Python 3.10+ and installed Google Chrome on macOS or native Windows.
+The worker requires a 1600 × 1000 browser viewport and English Kahua labels.
+OCR reads the **browser screenshot** for controls and independent readback;
+CSV files and drawing logs supply the input metadata. It does not OCR PDFs.
+OCR runs locally, without a cloud service or runtime model download.
 
-Copy `examples/automatic-queue` to a working directory. It contains synthetic
+### macOS installation (Terminal)
+
+Start in the repository directory. Install Python, Chrome and Xcode Command
+Line Tools if absent (`xcode-select --install` supplies `swiftc`). Then:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[browser]'
+mkdir -p output/tools/swift-cache state
+swiftc -module-cache-path output/tools/swift-cache \
+  scripts/ocr_screenshot.swift -o output/tools/ocr-screenshot
+```
+
+The existing Apple Vision helper is preserved. `--ocr-backend vision` uses
+`output/tools/ocr-screenshot` by default. An existing invocation such as
+`--ocr-executable output/tools/ocr-screenshot` still uses the JSON helper.
+
+### Native Windows installation (PowerShell)
+
+Start in the repository directory, for example `Set-Location 'C:\Migration\kahua-migration'`.
+Install 64-bit Python (3.12 is used by the hosted fixture job) and Google Chrome.
+Install Tesseract 5 with its English (`eng`) language data:
+
+```powershell
+winget install --exact --id UB-Mannheim.TesseractOCR
+py -3 -m venv .venv
+& .\.venv\Scripts\python.exe -m pip install -e ".[browser,ocr]"
+$ocr = Join-Path $env:ProgramFiles 'Tesseract-OCR\tesseract.exe'
+& $ocr --version
+& $ocr --list-langs
+```
+
+If installed elsewhere, set `$ocr` to that executable's full path. The language
+list must contain `eng`. The [Tesseract installation guide](https://tesseract-ocr.github.io/tessdoc/Installation.html)
+links the [UB Mannheim Windows installer](https://github.com/UB-Mannheim/tesseract/wiki)
+if WinGet is unavailable. Installation needs network access; OCR execution does
+not. Neither WSL, Swift nor the Kahua Windows desktop application is required.
+Invoking the venv Python directly avoids PowerShell activation-policy changes.
+
+Tesseract is a separate native install; the Python `ocr` extra supplies Pillow
+for 2× screenshot scaling. Word coordinates are mapped back to original CSS
+pixels. PNG bytes go through a local binary pipe, avoiding native Windows
+Unicode filename and temporary-file locking problems. A label's confidence
+is the **minimum measured word confidence / 100**,
+with the existing 0.95 threshold unchanged. An uncertain label stops the action;
+no perfect scores or expected text are substituted. Tesseract and Vision scores
+are engine-specific, so synthetic success does not calibrate a live tenant.
+
+### Backend selection
+
+Without OCR options, `auto` selects Vision on macOS and Tesseract elsewhere.
+Tesseract is found on `PATH` or at the standard Windows Program Files location.
+An explicit `--ocr-executable` alone preserves the legacy JSON-helper protocol.
+For a Tesseract override use **both** `--ocr-backend tesseract` and
+`--ocr-executable "path with spaces\tesseract.exe"`. Supply one executable path,
+not a shell command containing flags. `audit` and `pilot` accept the same OCR
+options. Custom native helpers can use `--ocr-backend external`; they must emit
+UTF-8 JSON with `image_width`, `image_height`, and `lines` containing `text`,
+`confidence` (0–1), `x`, `y`, `width`, `height` in original screenshot pixels.
+
+Planning needs only core Python. It does not import Playwright/Pillow, locate
+an OCR executable, open Chrome or create a migration journal. Execution checks
+the selected engine before launching Chrome.
+
+### Source inputs
+
+For a new migration, copy `examples/automatic-queue` to a working directory
+(`cp -R examples/automatic-queue my-migration` on macOS, or
+`Copy-Item -Recurse .\examples\automatic-queue .\my-migration` in PowerShell).
+It contains synthetic
 CSV metadata and configuration only; supply the actual PDFs.
+Replace example project mappings, logs and folders with your actual values.
+For an existing migration, keep its unchanged inputs and existing journal.
+JSON path values can use forward slashes on Windows; literal backslashes in
+JSON must be doubled. Quote command-line paths that contain spaces.
 
 `version_sets.csv` retains the existing version-set columns and adds explicit
 project/destination columns. Repeat project fields consistently on every row
@@ -25,16 +101,42 @@ for that project. Preserve leading zeros in project numbers.
 |---|---|
 | `project_uid` | Stable source project identity |
 | `project_name` | Source project name |
+| `project_sequence` | Project queue order: one positive integer repeated on every row for that project |
 | `project_kahua_entity_id` | Retained export field; `0` does not identify a browser destination |
 | `version_set_uid` | Stable version-set identity |
 | `version_name` | Exact batch name |
 | `published_at` | Batch date, `YYYY-MM-DD` |
-| `upload_sequence` | Whole-batch order, starting at 1 |
+| `upload_sequence` | Version-set order within each project, covering 1 through N |
 | `source_directory` | Project source directory, relative to `source_root` |
 | `version_folder` | This batch's PDF directory, relative to its source directory |
 | `target_project_number` | Exact destination number |
 | `target_project_name` | Exact destination name |
 | `target_folder_path` | Exact slash-separated folder path |
+
+### Multiple projects in one queue
+
+Put all projects in the same `version_sets.csv`. The worker processes projects
+in ascending numeric `project_sequence`, completing each project's version sets
+in ascending `upload_sequence` before opening the next project. For example:
+
+```csv
+project_uid,project_sequence,version_set_uid,upload_sequence
+project-b,1,b-original,1
+project-b,1,b-revision,2
+project-a,2,a-original,1
+project-a,2,a-revision,2
+```
+
+This is an ordering illustration; the real CSV also needs the other columns
+listed above. CSV row order and project names do not override either sequence.
+Every project must have a unique positive `project_sequence`; repeat it on all
+that project's rows. Gaps between project numbers are allowed. Blank, invalid,
+conflicting or duplicate project sequence values stop the audit before Chrome
+opens. `--project-uid` filters the queue without changing its configured order.
+Check the project array and sequence values in `run-plan.json` before execution.
+Older CSVs with no `project_sequence` column keep their prior `project_uid`
+sorting. For an existing migration, preserve source inputs and the journal;
+use the new column when preparing a new queue.
 
 Shared settings go in `project_defaults` in `migration.json`. CSV fields such as
 `target_domain_name`, `target_environment`, `drawing_log`, `current_log`,
@@ -56,15 +158,18 @@ uploaded. Every input PDF is hashed before execution.
 
 ## Plan and run
 
-Close any earlier migration process that owns the same browser profile. First
-write a local audit and plan:
+Close any earlier migration process that owns the same browser profile. Never
+run two queues against the same profile or journal. First write a local audit
+and plan. Use fresh output directory names for every attempt; examples below
+assume they do not yet exist.
+
+### macOS plan, execution and result
 
 ```sh
 .venv/bin/python -m kahua_migration browser migrate \
   --version-sets my-migration/version_sets.csv \
   --config my-migration/migration.json \
   --journal state/my-migration.sqlite \
-  --ocr-executable output/tools/ocr-screenshot \
   --out output/my-plan
 ```
 
@@ -77,9 +182,48 @@ directory and the same journal:
   --version-sets my-migration/version_sets.csv \
   --config my-migration/migration.json \
   --journal state/my-migration.sqlite \
-  --ocr-executable output/tools/ocr-screenshot \
+  --ocr-backend vision \
   --out output/my-run-01 --execute
 ```
+
+Check the report (success requires the literal boolean `true`):
+
+```sh
+.venv/bin/python -c 'import json; from pathlib import Path; r=json.loads(Path("output/my-run-01/run-report.json").read_text(encoding="utf-8")); print(r); assert r["passed"] is True'
+```
+
+### Windows plan, execution and result
+
+```powershell
+& .\.venv\Scripts\python.exe -m kahua_migration browser migrate `
+  --version-sets .\my-migration\version_sets.csv `
+  --config .\my-migration\migration.json `
+  --journal .\state\my-migration.sqlite `
+  --out .\output\my-plan
+```
+
+Review `manifest.json`, `issues.json` and `run-plan.json`. Resolve audit errors
+and review warnings before executing. In the same PowerShell session, with
+`$ocr` set as above:
+
+```powershell
+& .\.venv\Scripts\python.exe -m kahua_migration browser migrate `
+  --version-sets .\my-migration\version_sets.csv `
+  --config .\my-migration\migration.json `
+  --journal .\state\my-migration.sqlite `
+  --ocr-backend tesseract --ocr-executable "$ocr" `
+  --out .\output\my-run-01 --execute
+$migrationExit = $LASTEXITCODE
+$report = Get-Content -Raw -Encoding UTF8 .\output\my-run-01\run-report.json | ConvertFrom-Json
+$report | Format-List
+if ($migrationExit -ne 0 -or $report.passed -ne $true) { throw 'Migration did not pass; inspect the reports and preserve the journal.' }
+```
+
+Exit 0 means success, 2 means audit errors or a queue that did not fully pass,
+and 1 means setup/execution stopped with an error. If setup stops before a
+`run-report.json` exists, inspect the terminal error and source audit reports.
+For either OS, also inspect each project's report and linked metadata and
+original-file integrity reports; a successful process start is not a pass.
 
 The worker checks for a usable signed-in session. If Kahua shows its login
 screen, sign in in the worker's Chrome window and acknowledge any environment
@@ -143,6 +287,33 @@ reconciliation establishes that retry is safe; this is not an automatic retry.
 Do not delete a journal or start a new one to force a populated folder to replay.
 Keep all evidence and SQLite files.
 
+Resume commands reuse the exact CSV/configuration/source files and SQLite
+journal. Only the output directory changes. On macOS:
+
+```sh
+.venv/bin/python -m kahua_migration browser migrate \
+  --version-sets my-migration/version_sets.csv \
+  --config my-migration/migration.json \
+  --journal state/my-migration.sqlite --ocr-backend vision \
+  --out output/my-run-02 --execute
+```
+
+In Windows PowerShell:
+
+```powershell
+& .\.venv\Scripts\python.exe -m kahua_migration browser migrate `
+  --version-sets .\my-migration\version_sets.csv `
+  --config .\my-migration\migration.json `
+  --journal .\state\my-migration.sqlite `
+  --ocr-backend tesseract --ocr-executable "$ocr" `
+  --out .\output\my-run-02 --execute
+```
+
+Repeat the result check against `my-run-02`. Keep an in-progress migration on
+its original machine and source paths. Manifests include the resolved source
+root and records include platform-specific relative paths. Cross-platform
+journal relocation is not implemented or validated.
+
 An explicitly recognized file-download service error allows one read-only
 retry after its error dialogs are acknowledged. Both attempts recheck the
 selected revision and compare the returned bytes with the source. Unknown
@@ -153,3 +324,84 @@ commands.
 The previous manual version is preserved at
 `manual-pilot-v0.1.0`. See `README.md` for the exact current live-validation
 results and remaining limits of this branch.
+
+## Portability validation scope
+
+The November 2026 portability work uses local adapter/CLI/regression tests,
+generated screenshots with real OCR, and intercepted Chrome fixture pages.
+`.github/workflows/drawings-portability.yml` runs the same synthetic suite with
+native Windows Python, Tesseract and Chrome on GitHub-hosted Windows.
+Hosted fixtures are separate from the user's Windows VM and live Kahua.
+
+The user's Windows VM has also passed the fixture suite and a standalone
+plan-only command. Actual Kahua display/layout calibration and an authorized
+live Windows migration remain required. Existing supervised macOS live results
+in `README.md` are historical; they do not validate the new Windows backend or
+fresh unattended uploads.
+
+Local verification on November 5, 2026: the complete 162-test suite passed with
+Tesseract 5.5.4 on macOS. The same suite with the compiled Vision helper passed
+161 tests and skipped the one Tesseract-specific binary-pipe test. Both runs
+included all eight intercepted Chrome tests, original-file/hash and ordered
+batch regressions, project isolation, and durable journal recovery. The cold
+plan-only CLI also ran with Python site packages disabled. These are local
+and synthetic results, not Windows VM or live Kahua validation.
+
+The [hosted Windows run](https://github.com/jaintj95/kahua-migration/actions/runs/42032712135)
+also passed all 162 tests on November 5, 2026, using native Python 3.12 and
+Tesseract `v5.5.3.20260724`, including all eight Chrome fixtures and four real
+OCR image tests. This verifies installation, native subprocess/UTF-8 paths,
+binary PNG input, CSS coordinate scaling, engine checks and synthetic recovery
+on a GitHub runner. It does not validate real tenant layout, sign-in/MFA or
+migration throughput.
+
+After adding `project_sequence`, all 171 tests passed on macOS with Tesseract
+and in the [updated hosted Windows run](https://github.com/jaintj95/kahua-migration/actions/runs/42035787165).
+The nine additional tests cover numeric project ordering, invalid/conflicting
+sequence values, filtering, legacy CSV compatibility, stable journal operation
+identities, sequential execution, and continuing after a recoverable project
+failure.
+
+Native Windows VM verification on November 5, 2026 used an isolated copy under
+`C:\Users\MigrationEngineer\Documents\KahuaDrawings-20261105\code`, based on
+commit `05f8c8c` plus the privilege-aware symlink test correction. The full suite
+reported `Ran 171 tests` and `OK (skipped=1)`: 170 passed, with only the symlink
+fixture skipped because this account lacks Windows symbolic-link creation
+privilege (error 1314). That fixture passed on macOS and hosted Windows; the
+production source-path checks are unchanged. All OCR, Chrome, queue-ordering,
+revision and journal fixtures ran on the VM. Logs remain beside `code` in
+`tests-v2-stdout.log` and `tests-v2-stderr.log`.
+
+The VM's standalone plan-only command used Python `-S` (site packages disabled)
+and a nonexistent OCR executable. It exited 0 with both synthetic projects
+ready, project sequences `3, 20`, and version-set sequences `1, 2, 3` in each
+project. No browser profile or journal was created. A second plan containing
+duplicate `upload_sequence` values exited 2 and marked the affected project
+not ready with `DUPLICATE_VERSION_KEY`, `SEQUENCE_GAP` and
+`DATE_ORDER_CONFLICT`. Plans and issues remain under `plan-only` and
+`plan-duplicate` beside `code`. Neither check connected to Kahua or uploaded
+drawings.
+
+To reproduce the local checks, first install `.[browser,ocr]` even on macOS
+(Pillow renders synthetic test pixels). Compile Vision as above, then:
+
+```sh
+KAHUA_OCR_TESTS=1 KAHUA_BROWSER_TESTS=1 KAHUA_TEST_OCR_BACKEND=vision \
+  .venv/bin/python -m unittest discover -s tests -v
+```
+
+On Windows, after the native Tesseract install, run the same fixture suite:
+
+```powershell
+$env:KAHUA_OCR_TESTS = '1'
+$env:KAHUA_BROWSER_TESTS = '1'
+$env:KAHUA_TEST_OCR_BACKEND = 'tesseract'
+$env:KAHUA_TEST_OCR_EXECUTABLE = $ocr
+& .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+Tests use generated images, intercepted Chrome pages and localhost HTTP fixtures.
+The browser tests create temporary profiles, never reuse the migration profile,
+and never call Kahua. Running without the two opt-in variables skips real
+OCR/Chrome integration tests. On macOS, Tesseract can be checked separately with
+`brew install tesseract` and `KAHUA_TEST_OCR_BACKEND=tesseract` in the shell command.

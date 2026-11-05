@@ -161,7 +161,12 @@ class MigrationTests(unittest.TestCase):
         outside.write_bytes(b"%PDF-confidential")
         original = self.project / "Drawings/Set 1/A.pdf"
         original.unlink()
-        original.symlink_to(outside)
+        try:
+            original.symlink_to(outside)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) != 1314:
+                raise
+            self.skipTest("Windows account lacks symbolic-link creation privilege")
         self.assertIn("INVALID_DRAWING", self.codes(self.audit()))
 
     def test_repeated_audit_has_stable_manifest_id(self):

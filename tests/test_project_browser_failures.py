@@ -1,6 +1,7 @@
 """Opt-in Chrome tests of real dialog controls around the project queue.
 
-Set KAHUA_BROWSER_TESTS=1. Chrome and the compiled local OCR helper are required.
+Set KAHUA_BROWSER_TESTS=1. Chrome and a local OCR backend are required.
+KAHUA_TEST_OCR_BACKEND / KAHUA_TEST_OCR_EXECUTABLE select OCR as in the CLI.
 Every URL is intercepted with fixture HTML; these tests never contact Kahua.
 File writes and workflow transitions use the synthetic tenant from the logic
 tests. DOM dismissal, screenshots, OCR, tabs, queue and SQLite journal are real.
@@ -16,6 +17,7 @@ from kahua_migration.browser_navigation import DestinationNavigator
 from kahua_migration.browser_session import BrowserSessionRecovery
 from kahua_migration.browser_visual import click_text
 from kahua_migration.journal import Journal
+from kahua_migration.ocr import resolve_ocr
 import project_failure_fixture as fixture
 import test_project_failures as logic_cases
 
@@ -68,7 +70,10 @@ class NativePage:
                     '<button style="height:36px">Execute</button>';
                 const [cancel, close, execute] = modal.querySelectorAll('button');
                 execute.onclick=()=>{document.body.dataset.unexpectedSave='true';};
-                for (const button of [cancel, close, execute]) button.style='display:block;height:36px;font:18px Arial;margin-top:10px';
+                // Kahua paints canvas buttons. Avoid OS-native focus rings and
+                // bevels in this synthetic canvas fixture; they differ by OS
+                // and may be recognized as punctuation around the label.
+                for (const button of [cancel, close, execute]) button.style='display:block;height:36px;font:18px Arial;margin-top:10px;border:0;border-radius:0;outline:none;background:#eee';
                 cancel.disabled = mode === 'close' || mode === 'disabled';
                 close.disabled = mode === 'disabled';
                 for (const button of [cancel, close]) button.onclick=()=>{
@@ -91,7 +96,9 @@ class NativePage:
 
 class NativeNavigator(DestinationNavigator):
     def __init__(self, page, journal, output, _ocr):
-        super().__init__(page, journal, output, Path(__file__).parents[1] / "output/tools/ocr-screenshot")
+        engine = resolve_ocr(os.environ.get("KAHUA_TEST_OCR_BACKEND", "auto"),
+                             os.environ.get("KAHUA_TEST_OCR_EXECUTABLE"))
+        super().__init__(page, journal, output, engine)
 
     def ensure(self, target):
         self.target = target
@@ -130,6 +137,30 @@ class BrowserProjectFailureTests(unittest.TestCase):
         native = self.context.new_page()
         native.goto(self.environment)
         return NativePage(native, tenant, mode)
+
+    def test_css_pixels_keep_ocr_clicks_aligned_at_double_display_scale(self):
+        context = self.browser.new_context(viewport={"width": 1600, "height": 1000}, device_scale_factor=2)
+        self.addCleanup(context.close)
+        page = context.new_page()
+        page.set_content(HTML)
+        page.evaluate("""() => {
+            const button = document.createElement('button');
+            button.textContent = 'Download';
+            button.style = 'position:fixed;left:1100px;top:517px;width:180px;height:40px;font:22px Arial';
+            button.onclick = () => document.body.dataset.downloadClicked = 'true';
+            document.body.append(button);
+        }""")
+        engine = resolve_ocr(os.environ.get("KAHUA_TEST_OCR_BACKEND", "auto"),
+                             os.environ.get("KAHUA_TEST_OCR_EXECUTABLE"))
+        click_text(page, engine, self.logic.root / "scaled", "Download", [1080, 500, 1320, 580])
+        self.assertEqual(page.locator("body").get_attribute("data-download-clicked"), "true")
+        page.evaluate("""() => {
+            const overlay = document.createElement('div');
+            overlay.style = 'position:fixed;inset:0;z-index:30';
+            document.body.append(overlay);
+        }""")
+        with self.assertRaisesRegex(BrowserError, "overlay"):
+            click_text(page, engine, self.logic.root / "overlay", "Download", [1080, 500, 1320, 580])
 
     def check_dialog(self, mode, fault, expected_action):
         tenant = fixture.Tenant(self.logic.manifest, fault)

@@ -150,13 +150,35 @@ def audit(version_path, config_path):
     for uid in sorted(bindings.keys() - grouped.keys()):
         issue("UNUSED_PROJECT_BINDING", "Mapping has no rows in the version-set export", uid)
 
+    # The column is optional for existing exports. Once supplied, require an
+    # unambiguous complete project order before allowing any browser action.
+    project_sequences = {}
+    if any("project_sequence" in row for row in versions):
+        owners = {}
+        for uid, rows in grouped.items():
+            try:
+                values = {positive_int(row.get("project_sequence")) for row in rows}
+            except InputError as exc:
+                raise InputError(f"Invalid project_sequence for {uid}: {exc}") from exc
+            if len(values) != 1:
+                raise InputError(f"Conflicting project_sequence values for {uid}")
+            sequence = values.pop()
+            if sequence in owners:
+                raise InputError(f"Duplicate project_sequence {sequence} for {owners[sequence]} and {uid}")
+            owners[sequence] = uid
+            project_sequences[uid] = sequence
+    ordered_uids = sorted(grouped, key=project_sequences.get) if project_sequences else sorted(grouped)
+
     target_owners = {}
-    for uid, project_versions in sorted(grouped.items()):
+    for uid in ordered_uids:
+        project_versions = grouped[uid]
         binding = bindings.get(uid, {})
         start_issues = len(issues)
         project = dict(project_uid=uid, project_name=project_versions[0]["project_name"],
                        batches=[], source_ready=False, ready_for_upload=False,
                        source_directory=binding.get("source_directory"), excluded_files=[])
+        if project_sequences:
+            project["project_sequence"] = project_sequences[uid]
         projects.append(project)
         names = {v["project_name"] for v in project_versions}
         if len(names) != 1:
@@ -411,7 +433,8 @@ def audit(version_path, config_path):
             project = next(p for p in projects if p["project_uid"] == uid)
             project["ready_for_upload"] = False
             project["source_ready"] = False
-    records.sort(key=lambda r: (r["project_uid"], r["upload_sequence"], r["sheet_number"]))
+    project_rank = {uid: rank for rank, uid in enumerate(ordered_uids)}
+    records.sort(key=lambda r: (project_rank[r["project_uid"]], r["upload_sequence"], r["sheet_number"]))
     summary = dict(projects_in_export=len(grouped), version_sets_in_export=len(versions),
                    projects_with_local_history=sum(bool(p["batches"]) for p in projects),
                    source_files=len(records), source_bytes=sum(r["size_bytes"] for r in records),

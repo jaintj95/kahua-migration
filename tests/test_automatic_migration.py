@@ -1,4 +1,5 @@
 import copy
+from contextlib import ExitStack
 import json
 import tempfile
 import unittest
@@ -88,7 +89,7 @@ class NavigationTests(unittest.TestCase):
         self.assertEqual(match_folder([file, row(2, "", "Sheets")], "Sheets")["grid_row"], 2)
 
     def test_destination_intent_survives_reopen_and_blocks_duplicate_creation(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with tempfile.TemporaryDirectory() as temp, ExitStack() as resources:
             path = Path(temp) / "journal.sqlite"
             j = Journal(path)
             spec = {k: TARGET[k] for k in ("environment", "domain_name", "project_number", "project_name", "record_type")}
@@ -96,7 +97,7 @@ class NavigationTests(unittest.TestCase):
             j.begin_destination(key, spec, {"evidence_path": "review.json"})
             j.close()
             j = Journal(path)
-            self.addCleanup(j.close)
+            resources.callback(j.close)
             nav = DestinationNavigator(MagicMock(), j, Path(temp) / "out", "ocr")
             nav.target = TARGET
             nav.find_project = MagicMock(return_value=None)
@@ -135,9 +136,9 @@ class NavigationTests(unittest.TestCase):
             walker.collect(walker.read, lambda r: r["name"], 50)
 
     def test_creation_recovery_requires_no_action_and_fresh_absence(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with tempfile.TemporaryDirectory() as temp, ExitStack() as resources:
             journal = Journal(Path(temp) / "journal.sqlite")
-            self.addCleanup(journal.close)
+            resources.callback(journal.close)
             spec = {"folder_path": "Sheets/Imported"}
             journal.begin_destination("folder", spec, {"evidence_path": "before.json"})
             with self.assertRaises(JournalConflict):

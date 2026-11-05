@@ -6,7 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from kahua_migration.browser import BrowserError
-from kahua_migration.browser_visual import text_center, recognize, exact_candidate_bounds
+from kahua_migration.browser_visual import text_center, recognize, exact_candidate_bounds, click_text
+from kahua_migration.ocr import OcrEngine
 
 
 class VisualTargetTests(unittest.TestCase):
@@ -70,22 +71,41 @@ class VisualTargetTests(unittest.TestCase):
         result = {"image_width": 170, "image_height": 45,
                   "lines": [self.line(x=20, y=10)]}
         with tempfile.TemporaryDirectory() as directory, patch(
-                "kahua_migration.browser_visual.subprocess.run",
-                return_value=SimpleNamespace(returncode=0, stdout=json.dumps(result))):
+                "kahua_migration.ocr.subprocess.run",
+                return_value=SimpleNamespace(returncode=0, stdout=json.dumps(result).encode("utf-8"))):
             path = Path(directory) / "menu.png"
-            document = recognize(page, "/tmp/ocr", path, bounds=[1080, 720, 1250, 765])
+            document = recognize(page, OcrEngine("external", "ocr"), path, bounds=[1080, 720, 1250, 765])
         self.assertEqual(text_center(document, "Download", [1080, 720, 1250, 765]), (1135, 738))
         self.assertEqual(page.screenshot.call_args.kwargs["clip"],
                          {"x": 1080, "y": 720, "width": 170, "height": 45})
+        self.assertEqual(page.screenshot.call_args.kwargs["scale"], "css")
 
     def test_cropped_recognition_rejects_wrong_pixel_dimensions(self):
         page = Mock(viewport_size={"width": 1600, "height": 1000})
         page.get_by_role.return_value.count.return_value = 0
         with tempfile.TemporaryDirectory() as directory, patch(
-                "kahua_migration.browser_visual.subprocess.run",
-                return_value=SimpleNamespace(returncode=0, stdout=json.dumps(self.document([])))):
+                "kahua_migration.ocr.subprocess.run",
+                return_value=SimpleNamespace(returncode=0, stdout=json.dumps(self.document([])).encode("utf-8"))):
             with self.assertRaises(BrowserError):
-                recognize(page, "/tmp/ocr", Path(directory) / "menu.png", bounds=[1080, 720, 1250, 765])
+                recognize(page, OcrEngine("external", "ocr"), Path(directory) / "menu.png", bounds=[1080, 720, 1250, 765])
+
+    def test_unexpected_overlay_never_receives_an_ocr_click(self):
+        page = Mock()
+        page.evaluate.return_value = {"tag": "DIV", "id": "unexpected"}
+        with tempfile.TemporaryDirectory() as directory, patch(
+                "kahua_migration.browser_visual.recognize", return_value=self.document([self.line()])):
+            with self.assertRaisesRegex(BrowserError, "overlay"):
+                click_text(page, "ocr", directory, "Download")
+        page.mouse.click.assert_not_called()
+
+    def test_sign_in_is_never_captured_or_sent_to_ocr(self):
+        page = Mock(viewport_size={"width": 1600, "height": 1000})
+        page.get_by_role.return_value.count.return_value = 1
+        with patch("kahua_migration.browser_visual.recognize_image") as engine:
+            with self.assertRaisesRegex(BrowserError, "sign-in"):
+                recognize(page, "ocr", "unused.png")
+        page.screenshot.assert_not_called()
+        engine.assert_not_called()
 
 
 if __name__ == "__main__":

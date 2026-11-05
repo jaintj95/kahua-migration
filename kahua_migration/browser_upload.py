@@ -179,7 +179,7 @@ class BatchAttachment:
         self.records, self.journal = records, journal
         self.output = Path(output).resolve()
         self.output.mkdir(parents=True, exist_ok=True)
-        self.ocr = str(Path(ocr_executable).resolve())
+        self.ocr = ocr_executable
         self.allow_partial = allow_partial
         self.membership_snapshot = membership_snapshot
 
@@ -300,7 +300,7 @@ class UploadGrid:
         self.inspector, self.page, self.records = inspector, inspector.page, records
         self.output = Path(output).resolve()
         self.output.mkdir(parents=True, exist_ok=True)
-        self.ocr = str(Path(ocr_executable).resolve())
+        self.ocr = ocr_executable
         names = [Path(r["source_file"]).name for r in records]
         if len(set(names)) != len(names):
             raise BrowserError("Upload rows require unique source filenames within this batch")
