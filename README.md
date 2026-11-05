@@ -21,6 +21,14 @@ Disable/Enable cycle after the Save wait was corrected. The guide records the
 and pilot limits. Each flag run prints its current project and step and saves
 a live `progress.log`; the guide includes the command to follow that log.
 
+For production, use the [production commands and resume instructions](SYNC_FLAGS.md#production-commands).
+`Environment = 'PRODUCTION'` is required even without a visible client label;
+the runner verifies the registered production package. The guide distinguishes
+new batches from the VM's existing state, explains state-binding errors and
+same-name sync conflicts, and records the 154 passing Windows fixture checks.
+The latest live production Check is blocked by Kahua's existing sync-name
+conflict; production Enable has not been validated.
+
 For **documents and photos**, see [LOCAL_FILE_SYNC.md](LOCAL_FILE_SYNC.md).
 The PowerShell CSV runner selects existing projects, controls Local Files Sync,
 and verifies downloaded originals by SHA-256 before checking sync is off.

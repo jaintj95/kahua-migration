@@ -134,10 +134,20 @@ same CSV and a **new state directory** for the opposite action:
 For a `sync_enabled` CSV, use `-Action FromCsv`. Plan is the default mode when
 `-Mode` is omitted; a mode must be changed to Execute before flags are written.
 
-For a new production batch, retain one state directory for Plan, Check, Execute,
-and retries with the unchanged CSV:
+### Production commands
+
+Use the production-aware adapter introduced in commit `37317c5` or later.
+That fix is already installed in the supervised VM's repository. An older
+copy can still reject production because it expects a visible environment
+label. Keep `Environment = 'PRODUCTION'`, even when the client shows no label;
+do not replace it with a blank string or the launch URL. Sign in to the
+production Windows client manually before Check.
+
+For a **new production batch**, run this setup once. Retain the resulting state
+directory for Plan, Check, Execute, and retries with unchanged inputs:
 
 ```powershell
+Set-Location -LiteralPath "$env:USERPROFILE\Desktop\Projects\kahua-migration"
 $runner = '.\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1'
 $kahuaRun = @{
     CsvPath = "$env:USERPROFILE\Downloads\sameProjectsEnableSync.csv"
@@ -147,18 +157,67 @@ $kahuaRun = @{
         'Documents\KahuaRuns\production-enable-' + (Get-Date -Format yyyyMMdd-HHmmss)
     )
 }
-& $runner @kahuaRun -Mode Plan
-& $runner @kahuaRun -Mode Check
-# After Check succeeds:
-& $runner @kahuaRun -Mode Execute
 ```
 
-Assign the timestamped `StateRoot` once and retain its value. A state-directory
+For the **existing production batch on the supervised VM**, use this setup
+instead. It restores the saved folder after reopening PowerShell; it must be
+used only with that batch's unchanged CSV, domain, environment, and action:
+
+```powershell
+Set-Location -LiteralPath "$env:USERPROFILE\Desktop\Projects\kahua-migration"
+$runner = '.\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1'
+$kahuaRun = @{
+    CsvPath = "$env:USERPROFILE\Downloads\sameProjectsEnableSync.csv"
+    Environment = 'PRODUCTION'
+    Action = 'Enable'
+    StateRoot = "$env:USERPROFILE\Documents\KahuaRuns\production-enable-20261105-204341"
+}
+```
+
+With either setup, run Plan and Check. Each invocation starts a fresh Windows
+PowerShell process so cached modules cannot hide a deployed update:
+
+```powershell
+powershell.exe -NoProfile -File $runner `
+    -CsvPath $kahuaRun.CsvPath -Environment $kahuaRun.Environment `
+    -Action $kahuaRun.Action -StateRoot $kahuaRun.StateRoot -Mode Plan
+if ($LASTEXITCODE -ne 0) { throw 'Plan failed. Resolve the reported error before continuing.' }
+
+powershell.exe -NoProfile -File $runner `
+    -CsvPath $kahuaRun.CsvPath -Environment $kahuaRun.Environment `
+    -Action $kahuaRun.Action -StateRoot $kahuaRun.StateRoot -Mode Check
+if ($LASTEXITCODE -ne 0) { throw 'Check failed. Do not run Execute; resolve the reported error first.' }
+```
+
+After Check exits with code 0 and its report has `status: checked`, enable:
+
+```powershell
+powershell.exe -NoProfile -File $runner `
+    -CsvPath $kahuaRun.CsvPath -Environment $kahuaRun.Environment `
+    -Action $kahuaRun.Action -StateRoot $kahuaRun.StateRoot -Mode Execute
+if ($LASTEXITCODE -ne 0) { throw 'Execute failed. Preserve this state and inspect the attempt report before retrying.' }
+```
+
+The last supervised production Check remains blocked by Kahua's **Unable to
+sync / project of the same name already synced** warning. Resolve the existing
+sync mapping conflict with the Kahua administrator, then close the dialog and
+rerun Check. Clearing the message alone does not resolve the conflict. Do not
+use account Reset or delete/rename existing synced folders to bypass it.
+
+Assign a new batch's timestamped `StateRoot` once and retain its value; do not
+generate a new timestamp on each retry. Never reuse the previous
+`enable-batch-001` DEVPRODUCTION state for this production batch. A state-directory
 mismatch means that environment, project list, domain, or desired switch values
 differ from its saved binding. Preserve that directory for recovery and choose
 a new one for the changed batch. Do not delete or edit `binding.json` to bypass
 the check. Plan validates inputs and state only; it does not prove desktop or
 production compatibility.
+
+Read the report path printed by each invocation. Check success is `checked`;
+Execute success is `flags-verified`, with reopened readbacks in its project
+receipts. Neither status establishes that file transfers finished. `failed`
+or an `uncertain` row requires recovery, not another blind toggle or Save.
+Keep all attempts and their `progress.log` files.
 
 ## Results and recovery
 
