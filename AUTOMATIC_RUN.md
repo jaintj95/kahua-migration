@@ -320,6 +320,14 @@ batch regressions, project isolation, and durable journal recovery. The cold
 plan-only CLI also ran with Python site packages disabled. These are local
 and synthetic results, not Windows VM or live Kahua validation.
 
+The [hosted Windows run](https://github.com/jaintj95/kahua-migration/actions/runs/42032712135)
+also passed all 162 tests on November 5, 2026, using native Python 3.12 and
+Tesseract `v5.5.3.20260724`, including all eight Chrome fixtures and four real
+OCR image tests. This verifies installation, native subprocess/UTF-8 paths,
+binary PNG input, CSS coordinate scaling, engine checks and synthetic recovery
+on a GitHub runner. It does not use or validate the user's Windows VM, real
+tenant layout, sign-in/MFA or migration throughput.
+
 To reproduce the local checks, first install `.[browser,ocr]` even on macOS
 (Pillow renders synthetic test pixels). Compile Vision as above, then:
 

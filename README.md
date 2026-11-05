@@ -71,6 +71,8 @@ The portability tests cover adapter contracts, UTF-8/paths with spaces,
 coordinate scaling, CLI behavior, intercepted browser fixtures, ordered batches,
 project isolation and uncertain-Save reconciliation. A separate hosted Windows
 fixture job is defined in `.github/workflows/drawings-portability.yml`.
+[All 162 hosted Windows fixture tests passed](https://github.com/jaintj95/kahua-migration/actions/runs/42032712135)
+on November 5, 2026, with native Python, Tesseract and Chrome.
 Windows VM and live Kahua validation remain pending; synthetic tests do not
 establish tenant compatibility or unattended migration reliability. The Windows
 documents/photos and sync-flag scripts above are separate workflows.
