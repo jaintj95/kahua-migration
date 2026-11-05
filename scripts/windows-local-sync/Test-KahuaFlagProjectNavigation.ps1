@@ -14,7 +14,10 @@ namespace System.Windows.Automation {
     public class Condition { }
     public class PropertyCondition : Condition {
         public object Property, Value;
-        public PropertyCondition(object property, object value) { Property=property; Value=value; }
+        public PropertyCondition(object property, object value) {
+            Property=property;
+            Value=value is ControlType ? (object)((ControlType)value).Id : value;
+        }
     }
     public class AndCondition : Condition {
         private Condition[] conditions;
@@ -22,7 +25,9 @@ namespace System.Windows.Automation {
         public Condition[] GetConditions() { return conditions; }
     }
     public class ControlType {
-        public static readonly string Button="button", Edit="edit";
+        public readonly int Id;
+        private ControlType(int id) { Id=id; }
+        public static readonly ControlType Button=new ControlType(50000), Edit=new ControlType(50004);
     }
     public class AutomationElement {
         public static readonly string AutomationIdProperty="id", NameProperty="name", ControlTypeProperty="type";
@@ -83,7 +88,9 @@ function Get-KahuaActiveRoot {
         if ($fault -eq 'slow-success') { Start-Sleep -Milliseconds 1100 }
         if ($id -eq 'Shell_PartitionSelector') {
             $this.state.headerReads++
-            if ($type -ne [Windows.Automation.ControlType]::Button -or $name -cne 'Current Project 0002 - Exact project') {
+            # Windows PropertyCondition.Value stores a ControlType's numeric Id.
+            # Match that contract in both the real UIA types and the macOS stub.
+            if ($type -ne [Windows.Automation.ControlType]::Button.Id -or $name -cne 'Current Project 0002 - Exact project') {
                 throw 'The project identity selector was weakened'
             }
             if ($fault -in @('missing-header','wrong-header') -or ($fault -eq 'delayed-header' -and $this.generation -eq 1)) { return }
@@ -94,7 +101,7 @@ function Get-KahuaActiveRoot {
         }
         if ($id -eq 'SearchBox') {
             $this.state.pickerReads++
-            if ($type -ne [Windows.Automation.ControlType]::Edit) { throw 'Wrong project picker selector' }
+            if ($type -ne [Windows.Automation.ControlType]::Edit.Id) { throw 'Wrong project picker selector' }
             if ($fault -eq 'open-picker' -or ($fault -eq 'delayed-picker' -and $this.generation -eq 1)) {
                 return (New-Header -Enabled $true -Runtime 3)
             }
