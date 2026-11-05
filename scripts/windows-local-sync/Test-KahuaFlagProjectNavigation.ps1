@@ -33,7 +33,7 @@ namespace System.Windows.Automation {
         public static readonly string AutomationIdProperty="id", NameProperty="name", ControlTypeProperty="type";
     }
     public class ElementNotAvailableException : System.Exception {
-        public ElementNotAvailableException() : base("Unrecognized error.") { }
+        public ElementNotAvailableException(string message) : base(message) { }
     }
 }
 '@
@@ -62,7 +62,7 @@ function Reset-Fixture([string]$Fault='') {
 function Get-KahuaActiveRoot {
     $script:fixture.roots++
     if ($script:fixture.fault -eq 'root-stale' -and $script:fixture.roots -eq 1) {
-        throw [System.Windows.Automation.ElementNotAvailableException]::new()
+        throw [System.Windows.Automation.ElementNotAvailableException]::new('Unrecognized error.')
     }
     $root=[pscustomobject]@{state=$script:fixture;generation=$script:fixture.roots}
     $root | Add-Member ScriptMethod FindAll {
@@ -82,7 +82,7 @@ function Get-KahuaActiveRoot {
             ($fault -eq 'picker-stale' -and $id -eq 'SearchBox')))) {
             # ScriptMethod invocation wraps this in MethodInvocationException,
             # reproducing the reported FindAll/ElementNotAvailable failure.
-            throw [System.Windows.Automation.ElementNotAvailableException]::new()
+            throw [System.Windows.Automation.ElementNotAvailableException]::new('Unrecognized error.')
         }
         if ($fault -eq 'untyped-error') { throw 'Unrecognized error.' }
         if ($fault -eq 'slow-success') { Start-Sleep -Milliseconds 1100 }
