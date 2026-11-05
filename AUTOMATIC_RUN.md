@@ -101,16 +101,42 @@ for that project. Preserve leading zeros in project numbers.
 |---|---|
 | `project_uid` | Stable source project identity |
 | `project_name` | Source project name |
+| `project_sequence` | Project queue order: one positive integer repeated on every row for that project |
 | `project_kahua_entity_id` | Retained export field; `0` does not identify a browser destination |
 | `version_set_uid` | Stable version-set identity |
 | `version_name` | Exact batch name |
 | `published_at` | Batch date, `YYYY-MM-DD` |
-| `upload_sequence` | Whole-batch order, starting at 1 |
+| `upload_sequence` | Version-set order within each project, covering 1 through N |
 | `source_directory` | Project source directory, relative to `source_root` |
 | `version_folder` | This batch's PDF directory, relative to its source directory |
 | `target_project_number` | Exact destination number |
 | `target_project_name` | Exact destination name |
 | `target_folder_path` | Exact slash-separated folder path |
+
+### Multiple projects in one queue
+
+Put all projects in the same `version_sets.csv`. The worker processes projects
+in ascending numeric `project_sequence`, completing each project's version sets
+in ascending `upload_sequence` before opening the next project. For example:
+
+```csv
+project_uid,project_sequence,version_set_uid,upload_sequence
+project-b,1,b-original,1
+project-b,1,b-revision,2
+project-a,2,a-original,1
+project-a,2,a-revision,2
+```
+
+This is an ordering illustration; the real CSV also needs the other columns
+listed above. CSV row order and project names do not override either sequence.
+Every project must have a unique positive `project_sequence`; repeat it on all
+that project's rows. Gaps between project numbers are allowed. Blank, invalid,
+conflicting or duplicate project sequence values stop the audit before Chrome
+opens. `--project-uid` filters the queue without changing its configured order.
+Check the project array and sequence values in `run-plan.json` before execution.
+Older CSVs with no `project_sequence` column keep their prior `project_uid`
+sorting. For an existing migration, preserve source inputs and the journal;
+use the new column when preparing a new queue.
 
 Shared settings go in `project_defaults` in `migration.json`. CSV fields such as
 `target_domain_name`, `target_environment`, `drawing_log`, `current_log`,
