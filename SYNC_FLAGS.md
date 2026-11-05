@@ -124,6 +124,22 @@ If Windows blocks downloaded scripts, use your organization's approved script
 execution policy. The launcher does not change that policy. It starts a fresh
 Windows PowerShell process when launched through the `.cmd` file.
 
+If a downloaded ZIP's launcher is rejected as **not digitally signed**, check
+`Get-ExecutionPolicy -List`. Under `RemoteSigned`, trusted downloaded scripts
+can be unblocked without changing that policy. From the reviewed repository's
+root directory in Windows PowerShell:
+
+```powershell
+Get-ChildItem -LiteralPath .\scripts\windows-local-sync -File |
+  Where-Object { $_.Extension -in '.ps1', '.psm1' } |
+  Unblock-File
+& .\Start-SyncFlags.cmd
+```
+
+`AllSigned` still requires scripts signed by a trusted publisher; unblocking
+does not meet that requirement. See
+[Microsoft's execution-policy guidance](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-5.1#manage-signed-and-unsigned-scripts).
+
 ## Automatic history and retries
 
 `StateRoot` is **optional**. By default, each batch's history lives under
@@ -353,6 +369,22 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
 
 ## Validation and current limits
 
+- **November 6 Local Files context fix:** the supplied Check attempt
+  `20261105T205104Z-45bbfe42` opened the first project, then stopped at
+  `settings-open` because the active view had no `TitleText` named `My settings`.
+  This happened before APPLY, any switch change or Save. The recovery code had
+  added an extra lookup for the Account menu entry after navigating into Local
+  Files. It now checks the open dialog's Close/Save/Cancel controls, account
+  status, exact project and Folders. A new fixture reproduces the exact error
+  before the fix and passes all 23 scenarios after it. All 198 checks across
+  eight local suites pass in macOS PowerShell 7.6.9; all 20 PowerShell files
+  parse. [Windows CI run 42108994927](https://github.com/jaintj95/kahua-migration/actions/runs/42108994927)
+  passes **247 checks across eleven suites** and parses **20 scripts** in
+  Windows PowerShell `5.1.26100.33648` at commit `4be5fd7`.
+  The controls are simulated; live Kahua validation remains pending for this fix.
+  Close the settings dialog left open by this failed Check, then rerun the
+  updated launcher with the same CSV and batch history. It must pass Check
+  before offering APPLY.
 - **November 6 project-open recovery fix:** the supplied production Check log
   stopped at `project-open` when `KahuaDesktop.psm1`'s `FindAll` raised a wrapped
   `ElementNotAvailableException`. Build `30725ef` had Local Files recovery but
@@ -368,8 +400,10 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
   navigation suite. Initial CI exposed two fixture assumptions about UIA
   control-type values and default exception text; the fixture now uses numeric
   control IDs and explicitly reproduces the supplied error message.
-  The recovery fix has not been deployed to the VM or checked against live
-  Kahua. The log does not establish why Kahua invalidated the original element.
+  A later user-supplied production Check reached Local Files after project
+  selection, then failed the settings-context check described above. That
+  attempt did not complete Check or Execute and does not validate stale-read
+  recovery. The earlier log does not establish why Kahua invalidated its element.
 - The launcher/history suite passes 20 simulated scenarios on macOS PowerShell
   7.6.9 and Windows PowerShell 5.1, including
   automatic reuse, changed batches, preserved logs, legacy state, locks,

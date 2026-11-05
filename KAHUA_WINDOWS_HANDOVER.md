@@ -30,14 +30,15 @@ The guided `Start-SyncFlags.cmd` launcher now manages history automatically,
 checks the reviewed batch before APPLY, and retains the explicit `StateRoot`
 option for legacy runs. Recognized temporary reads get bounded recovery;
 Save reconciliation never repeats a toggle or Save. Local simulated launcher
-and recovery checks pass, and [Windows CI](https://github.com/jaintj95/kahua-migration/actions/runs/42094873358)
-passed all 224 fixture checks across ten suites and parsed 19 scripts in
-Windows PowerShell 5.1 at commit `5c8bc8a`. Archive `30725ef` was extracted on the supervised VM on November 6
+and recovery checks pass, and [Windows CI](https://github.com/jaintj95/kahua-migration/actions/runs/42108994927)
+passed all 247 fixture checks across eleven suites and parsed 20 scripts in
+Windows PowerShell 5.1 at commit `4be5fd7`. Archive `30725ef` was extracted on the supervised VM on November 6
 and reached the CSV prompt; a completed live Check/Execute of that version has
-not been verified. A November 6 fix adds recovery for the project-open read
-that failed in the supplied production log. It passes 175 local simulated
-checks across seven suites and the Windows CI run above; it has not been
-deployed or validated against the live Windows client. The production same-name sync conflict remains an
+not been verified. The November 6 fixes cover stale project-open reads and the
+incorrect settings-menu lookup reported during Check. They pass 198 local
+simulated checks across eight suites and the Windows CI run above; the latest
+settings-context fix has not been deployed or validated against the live
+Windows client. The production same-name sync conflict remains an
 application issue; automatic history does not resolve it. See
 [the current limits and recovery rules](SYNC_FLAGS.md#bounded-recovery).
 
@@ -332,6 +333,23 @@ proven Kahua defect. It affects sign-in and deployment support. Future policy
 or session changes remain an administrator dependency. Remaining risk is Medium
 with identity and deployment-hash checks.
 
+On November 6 the user reported that the downloaded launcher could not load
+`Start-KahuaSyncFlags.ps1`: "not digitally signed", `SecurityError`,
+`UnauthorizedAccess`. PowerShell rejected the script before launcher or Kahua
+actions began. The effective policy and download-zone marker have not been
+inspected; `RemoteSigned` with a download marker and `AllSigned` are distinct
+possible causes. This is an environment/policy deployment block, not a live
+Kahua or recovery failure. For trusted downloaded scripts, `Unblock-File` can
+remove the download marker under `RemoteSigned` without changing the execution
+policy; it does not satisfy `AllSigned`. Obtain `Get-ExecutionPolicy -List` if
+the block persists and use signed delivery where required. The user's later
+November 6 log confirms the launcher started and completed Plan for both
+production projects at 02:21:04 IST after the scoped `Unblock-File` command.
+The launch block is closed for that downloaded copy; the effective policy was
+not inspected, and future downloads may require reviewed unblocking. No VM
+access or policy change was made for this report.
+
+
 ### K09 Concurrency and scale are not established
 
 The post-reboot VM reported **2 vCPUs and 8536289280 bytes of physical RAM**
@@ -381,6 +399,7 @@ still pending.
 | November 4 pre-upgrade project-selection read had no `IsEmpty` property | The check stopped before selecting Seattle or changing sync. The shared complete-rectangle reader now covers this property as well as Width; incomplete/empty values are tested without invented coordinates. The original pre-upgrade startup sequence was not rerun. | Medium supervised; High unattended |
 | November 5 breadcrumb enumeration used expired controls, a null name, or a temporarily absent breadcrumb | Read-only retries failed after project navigation with `ElementNotAvailableException`, a null-valued method call, or a misleading disabled-breadcrumb message. Reads now reacquire the entire snapshot for up to three seconds, use the property method for names, and wait for a nonempty breadcrumb. Partial snapshots are discarded; clicks and Save are not retried. Regression cases and the 18:36 five-project Check pass. | Medium; persistent UI provider failures still stop the queue |
 | November 5 production project-open read was outside the new recovery boundary | User-supplied Check attempt `20261105T180725Z-a6883143` stopped at 23:37:34 IST in `PRODUCTION / TDOT.ECPCS`, after selecting the first of two projects (`0002 - DB2505 - I-24 at Epps Mill_Buchanan Road`). `KahuaDesktop.psm1:136` raised a wrapped `ElementNotAvailableException` from `FindAll`. This was preflight, before switch changes. Build `30725ef` still had the gap. The November 6 fix reacquires the complete project-open read after recognized stale-element failures, obeys the configured recovery count and one 45-second wait budget, and never repeats the project click. Exact enabled header, closed picker and environment/domain checks remain mandatory. Twenty-two provider/navigation fixtures, four full-selector regressions, the broader 175-check local run and 224 hosted Windows checks pass at `5c8bc8a`. The application-side reason for invalidation remains unconfirmed. | Medium supervised; High unattended. Hosted Windows PowerShell 5.1 fixtures pass; live Check remains unvalidated. Closure needs the same-input, same-state Check on the updated VM version, with recovery logs and all project receipts retained. |
+| November 6 Local Files context read required the closed Account menu | The complete user-supplied Check log (`20261105T205104Z-45bbfe42`) stopped at 02:21:16 IST in `PRODUCTION / TDOT.ECPCS` on `0002 - DB2505 - I-24 at Epps Mill_Buchanan Road`: `Expected one control id='TitleText' name='My settings' type='Text'; found 0.` Check had selected the project and opened settings, but had not reached APPLY, changed a switch or sent Save. Recovery commit `c098bfe` added a redundant lookup for the Account drawer entry inside the active Local Files view. The fix verifies the open dialog's Close/Save/Cancel controls plus account status, exact project and Folders instead. A regression fixture reproduces the exact error before the fix; all 23 settings-context scenarios pass after it, including stale reads without repeated navigation and refusal to close unsafe views during Save reconciliation. | Medium supervised; High unattended until live Check is verified. Automation regression, not a confirmed Kahua defect. [Windows CI `42108994927`](https://github.com/jaintj95/kahua-migration/actions/runs/42108994927) passes all 247 checks across eleven suites and parses 20 scripts at `4be5fd7`; the same-input, same-history live Check remains pending for this fix. No VM access occurred. |
 | November 6 navigation test fixture differed from native Windows UIA | Initial Windows runs `42094017854` and `42094478514` exposed fixture-only assumptions: `PropertyCondition.Value` stores a numeric control-type ID, and the native exception has different default text. The fixture now compares IDs and explicitly injects the reported `Unrecognized error.` message; runtime selectors and recovery code are unchanged by these corrections. [Windows CI `42094873358`](https://github.com/jaintj95/kahua-migration/actions/runs/42094873358) passes all 22 navigation scenarios and all 224 checks at `5c8bc8a`. | Low; closed as a test-fixture bug. Hosted fixtures still do not validate live Kahua behavior. |
 | No visible progress while Check navigated and read settings | Operators could not distinguish waiting, failure, and activity. Added timestamped console output and a flushed per-attempt UTF-8 `progress.log`, project counts, step names, polling messages and failure context. A blocked native UI call cannot emit a heartbeat while blocked. | Low for tested logging; Medium for diagnosing a blocked provider call |
 | Narrow remote viewport hid the selected-project header | A November 5 retry timed out although the header's exact identity remained in accessibility data with `IsOffscreen=True` and empty bounds. Expanding the remote window restored visible bounds. The guide requires both Kahua and the remote session to be large enough to show the project name. | Medium on untested layouts; identity checks deliberately stop |
