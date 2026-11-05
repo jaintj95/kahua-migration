@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 from .browser import BrowserAdapter, BrowserError, validate_browser_profile
 from .journal import Journal
+from .ocr import add_ocr_arguments, resolve_ocr
 from .preflight import InputError, atomic_json
 from .runner import Runner, build_plan, exclusive_run
 
@@ -29,8 +30,7 @@ def main(argv=None):
         if name in ("audit", "pilot"):
             cmd.add_argument("--manifest", type=Path, required=True)
             cmd.add_argument("--project-uid")
-            cmd.add_argument("--ocr-executable", type=Path, required=True,
-                             help="Compiled local macOS screenshot OCR helper")
+            add_ocr_arguments(cmd)
         if name == "pilot":
             cmd.add_argument("--journal", type=Path, required=True)
             cmd.add_argument("--execute", action="store_true",
@@ -63,6 +63,9 @@ def main(argv=None):
                 return 0
             if args.command == "run":
                 validate_browser_profile(profile)
+        if args.command in ("audit", "pilot"):
+            args.ocr_executable = resolve_ocr(args.ocr_backend, args.ocr_executable)
+            args.ocr_executable.check()
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:

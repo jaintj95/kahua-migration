@@ -1,4 +1,9 @@
-# Current worker: manual setup and operation
+# Bounded pilot: manual setup and operation
+
+For the current drawings/revisions queue (`python -m kahua_migration browser migrate`),
+use [AUTOMATIC_RUN.md](AUTOMATIC_RUN.md). It includes macOS shell and native
+Windows PowerShell installation, planning, execution, result and resume commands.
+The bounded `pilot` workflow below remains available with its original limits.
 
 This is the baseline before automatic project creation or navigation. The
 entry point is `python -m kahua_migration browser pilot`, implemented in
@@ -32,8 +37,14 @@ swiftc -module-cache-path output/tools/swift-cache \
 ```
 
 The commands below use the installed Chrome browser. The worker sets its
-viewport to 1600 × 1000; leave that size unchanged. The OCR helper in this
-baseline is macOS-specific. No Windows OCR implementation is included.
+viewport to 1600 × 1000; leave that size unchanged. This helper uses macOS
+Vision. The current code also supports native Windows Tesseract 5: follow the
+Windows installation in [AUTOMATIC_RUN.md](AUTOMATIC_RUN.md), use
+`.\.venv\Scripts\python.exe`, and replace the helper option with
+`--ocr-backend tesseract --ocr-executable "$ocr"` in PowerShell. Use PowerShell
+backticks for continuation. Both `audit` and `pilot` share the OCR adapter;
+plan-only pilot invocations do not require an OCR installation. The historical
+live calibration below does not establish Windows/live compatibility.
 
 ## 2. Prepare the local CSVs, PDFs and destination mapping
 

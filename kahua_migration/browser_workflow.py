@@ -77,7 +77,7 @@ class BatchWorkflow:
         self.observed = {(r["sheet_number"], r["revision"]): r for r in observed}
         self.output = Path(output).resolve()
         self.output.mkdir(parents=True, exist_ok=True)
-        self.ocr = str(Path(ocr_executable).resolve())
+        self.ocr = ocr_executable
         keys = {(r["sheet_number"], r["revision"]) for r in records}
         if (not records or len(keys) != len(records)
                 or len({r["batch_name"] for r in records}) != 1

@@ -5,13 +5,12 @@ resolve the corresponding semantic control and guard their project/folder.
 This module makes no service requests and does not operate native file dialogs.
 """
 
-import json
 import math
-import subprocess
 import uuid
 from pathlib import Path
 
 from .browser import BrowserError
+from .ocr import recognize_image
 from .preflight import atomic_json
 
 
@@ -66,12 +65,9 @@ def recognize(page, executable, path, *, bounds=None):
                 or not 0 <= bounds[1] < bounds[3] <= viewport["height"]):
             raise BrowserError("Recognition bounds are outside the viewport")
         clip = {"x": bounds[0], "y": bounds[1], "width": bounds[2] - bounds[0], "height": bounds[3] - bounds[1]}
-    page.screenshot(path=str(path), **({"clip": clip} if clip else {}))
-    result = subprocess.run([str(Path(executable).resolve()), str(path)],
-                            capture_output=True, text=True, timeout=30, check=False)
-    if result.returncode:
-        raise BrowserError("Local screenshot recognition failed")
-    document = json.loads(result.stdout)
+    # CSS pixels match mouse coordinates on Retina and Windows display scaling.
+    page.screenshot(path=str(path), scale="css", **({"clip": clip} if clip else {}))
+    document = recognize_image(executable, path)
     expected = (clip["width"], clip["height"]) if clip else (viewport["width"], viewport["height"])
     if (document["image_width"], document["image_height"]) != expected:
         raise BrowserError("Screenshot pixels do not match the browser viewport")

@@ -8,7 +8,7 @@ install the other.
 
 | Workflow | Source and entry point | Runtime | Guide |
 | --- | --- | --- | --- |
-| Drawings | `kahua_migration/`; `python -m kahua_migration browser migrate` | Python 3.10+ and Playwright | [AUTOMATIC_RUN.md](AUTOMATIC_RUN.md) |
+| Drawings and revisions | `kahua_migration/`; `python -m kahua_migration browser migrate` | macOS or native Windows; Python 3.10+, Playwright and offline OCR | [AUTOMATIC_RUN.md](AUTOMATIC_RUN.md) |
 | Project sync flags only | `scripts/windows-local-sync/`; `Invoke-KahuaSyncFlags.ps1` | Windows PowerShell 5.1 and Kahua for Windows | [SYNC_FLAGS.md](SYNC_FLAGS.md) |
 | Documents and photos | `scripts/windows-local-sync/`; `Invoke-KahuaSyncBatch.ps1` | Windows PowerShell 5.1 and Kahua for Windows | [LOCAL_FILE_SYNC.md](LOCAL_FILE_SYNC.md) |
 
@@ -59,10 +59,25 @@ Run `browser migrate` to read the CSV, find or create the named projects and
 folders, and process all version sets without selecting destinations manually.
 Sign-in and MFA are manual when Kahua requires them.
 
+The drawings browser command now has a shared offline OCR adapter: the existing
+Swift/Apple Vision helper on macOS and native Tesseract 5 on Windows. OCR locates
+canvas controls and reads target metadata; source metadata still comes from
+CSVs and drawing logs. Exact labels, unique matches, confidence ≥ 0.95, geometry
+and canvas-overlay checks remain enforced. Planning requires neither Chrome nor
+an OCR installation. The guide includes copyable setup, plan, execution, result
+checking and same-journal resume commands for both operating systems.
+
+The portability tests cover adapter contracts, UTF-8/paths with spaces,
+coordinate scaling, CLI behavior, intercepted browser fixtures, ordered batches,
+project isolation and uncertain-Save reconciliation. A separate hosted Windows
+fixture job is defined in `.github/workflows/drawings-portability.yml`.
+Windows VM and live Kahua validation remain pending; synthetic tests do not
+establish tenant compatibility or unattended migration reliability. The Windows
+documents/photos and sync-flag scripts above are separate workflows.
+
 Initial requirements and workflow notes are in [call_notes.md](call_notes.md).
 
-This implementation is on `main`. The previous manual
-version is preserved at `manual-pilot-v0.1.0`, with its instructions in
+The previous manual version is preserved at `manual-pilot-v0.1.0`, with its instructions in
 [MANUAL_RUN.md](MANUAL_RUN.md).
 
 The chosen route for drawings is **browser automation**. Files go directly from the local disk to Kahua, without API credentials, middleware transfers, Finder automation, or paid model calls. The source auditor, per-sheet revision calculation, durable journal, browser controls and verification code are implemented.

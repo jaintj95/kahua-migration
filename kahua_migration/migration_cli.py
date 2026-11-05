@@ -12,6 +12,7 @@ from .browser_migration import MigrationRunner, project_scope
 from .browser_visual import install_upload_input_fallback
 from .csv_config import validate_destination
 from .journal import Journal
+from .ocr import add_ocr_arguments, resolve_ocr
 from .preflight import InputError, audit, atomic_json
 from .runner import build_plan, exclusive_run, select_projects
 
@@ -39,7 +40,7 @@ def main(argv=None):
     parser.add_argument("--version-sets", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--journal", type=Path, required=True)
-    parser.add_argument("--ocr-executable", type=Path, required=True)
+    add_ocr_arguments(parser)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--project-uid", action="append")
     parser.add_argument("--user-data-dir", type=Path, default=Path("state/browser-profile"))
@@ -70,9 +71,12 @@ def main(argv=None):
         domains = {p["target"]["domain_name"] for p in runnable}
         if len(environments) != 1 or len(domains) != 1:
             raise InputError("Use one Kahua environment and domain per queue invocation")
-        if not args.ocr_executable.is_file():
-            raise InputError("Compile the local OCR helper and pass its executable path")
-        from playwright.sync_api import sync_playwright
+        ocr = resolve_ocr(args.ocr_backend, args.ocr_executable)
+        ocr.check()
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            raise InputError('Install the browser dependency: python -m pip install -e ".[browser]"') from None
         args.journal.parent.mkdir(parents=True, exist_ok=True)
         args.user_data_dir.mkdir(parents=True, exist_ok=True)
         with exclusive_run(args.journal), sync_playwright() as playwright:
@@ -86,7 +90,7 @@ def main(argv=None):
                 wait_for_sign_in(page, args.sign_in_timeout)
                 journal = Journal(args.journal)
                 try:
-                    report = MigrationRunner(page, manifest, journal, args.out, args.ocr_executable).run(args.project_uid)
+                    report = MigrationRunner(page, manifest, journal, args.out, ocr).run(args.project_uid)
                 finally:
                     journal.close()
                 print(json.dumps(report, indent=2))

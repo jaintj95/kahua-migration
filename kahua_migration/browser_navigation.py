@@ -47,7 +47,7 @@ class DestinationNavigator:
         self.page, self.journal = page, journal
         self.output = Path(output).resolve()
         self.output.mkdir(parents=True, exist_ok=True)
-        self.ocr = str(Path(ocr_executable).resolve())
+        self.ocr = ocr_executable
         self.ui = object.__new__(BrowserAdapter)
         self.ui.page, self.ui.timeout, self.ui.context = page, 30000, {}
         self.target, self.sequence = None, 0
