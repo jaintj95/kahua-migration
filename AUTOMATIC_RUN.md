@@ -81,13 +81,50 @@ Planning needs only core Python. It does not import Playwright/Pillow, locate
 an OCR executable, open Chrome or create a migration journal. Execution checks
 the selected engine before launching Chrome.
 
+### First-run settings
+
+Run the drawings command without a configuration argument. It creates
+`migration.local.json` locally if that file is missing. In a terminal it asks
+for these settings; press Enter at any prompt to accept its default:
+
+| Setting | Default |
+|---|---|
+| Kahua environment URL | `https://launch.kahua.com/` |
+| Kahua domain | `TDOT.ECPCS` |
+| Destination folder | `Sheets` |
+| Create missing projects | Yes |
+| Create missing folders | Yes |
+| Drawing log filename | `drawing_log.csv` |
+| Current-set log filename | `current_set_log.csv` |
+
+The revision rule remains per-sheet occurrence, starting at 1. The source
+comparison folder remains `Drawings/Current`. Project-specific CSV fields can
+override the shared defaults, including environment and domain.
+
+Later invocations reuse the saved settings without prompting or replacing the
+file. `--config` can select another settings file; a missing file is created
+there instead. `--no-input`, or running without an interactive terminal, accepts
+the defaults without prompting. End-of-input accepts defaults for the remaining
+questions. Cancelling setup leaves no partial configuration.
+
+The script also manages its own generated files:
+
+| File or directory | Behavior |
+|---|---|
+| `migration.local.json` | Created once and reused; ignored by Git |
+| `state/drawings.sqlite` | Created on execution and reused for resume; override with `--journal` |
+| `output/drawings/<timestamp>-<id>/` | A fresh report directory for each invocation; override with `--out` |
+| `state/browser-profile/` | Created when Chrome opens and reused for sign-in |
+
+All paths above are relative to the directory where you invoke the command.
+Settings, journal and report paths are printed at startup. No configuration
+template or generated state/report file needs to be copied or created manually.
+
 ### Source inputs
 
-For a new migration, copy the `drawings/` directory from
-`examples/automatic-queue` into the directory where you will invoke the command,
-and copy its `migration.json` as `migration.local.json`. The example contains
-synthetic CSV metadata and configuration only; supply the actual PDFs.
-Replace example project mappings, logs and folders with your actual values.
+Supply the actual export CSV, drawing/current logs and PDFs. If they already
+live in another parent directory, use `--source-root` to read them in place.
+`examples/automatic-queue` is a synthetic reference layout, not required setup.
 For an existing migration, keep its unchanged inputs and existing journal.
 JSON path values can use forward slashes on Windows; literal backslashes in
 JSON must be doubled. Quote command-line paths that contain spaces.
@@ -97,7 +134,7 @@ command. Put the shared `version_sets.csv` and all project directories directly
 under that parent:
 
 ```text
-migration.local.json
+migration.local.json  (created automatically)
 drawings/
   version_sets.csv
   Project A/
@@ -123,6 +160,13 @@ exact filenames in the CSV or per-project JSON mapping. The parent directory
 can be changed with `--source-root`; no project mapping edits are needed when
 only that parent moves.
 
+For a new queue using the generated settings, the CSV must supply the exact
+`source_directory`, `version_folder`, `target_project_number` and
+`target_project_name` mappings. These identify the actual source files and
+Kahua destinations; the first-run setup does not invent them. Add per-project
+`drawing_log` and `current_log` values when filenames differ from the shared
+defaults. Existing files can keep their names.
+
 `version_sets.csv` retains the existing version-set columns and adds explicit
 project/destination columns. Repeat project fields consistently on every row
 for that project. Preserve leading zeros in project numbers.
@@ -141,7 +185,7 @@ for that project. Preserve leading zeros in project numbers.
 | `version_folder` | This batch's PDF directory, relative to its source directory |
 | `target_project_number` | Exact destination number |
 | `target_project_name` | Exact destination name |
-| `target_folder_path` | Exact slash-separated folder path |
+| `target_folder_path` | Optional override of the shared destination folder (`Sheets` by default) |
 
 ### Multiple projects in one queue
 
@@ -168,7 +212,8 @@ Older CSVs with no `project_sequence` column keep their prior `project_uid`
 sorting. For an existing migration, preserve source inputs and the journal;
 use the new column when preparing a new queue.
 
-Shared settings go in `project_defaults` in `migration.json`. CSV fields such as
+Shared settings are saved in `project_defaults` in `migration.local.json`.
+CSV fields such as
 `target_domain_name`, `target_environment`, `drawing_log`, `current_log`,
 `current_folder`, `target_project_policy`, `target_folder_policy`, and
 `target_record_type` can override defaults. Existing per-project JSON mappings
@@ -196,20 +241,18 @@ assume they do not yet exist.
 ### macOS plan, execution and result
 
 ```sh
-.venv/bin/python -m kahua_migration browser migrate \
-  --config migration.local.json \
-  --journal state/my-migration.sqlite \
-  --out output/my-plan
+.venv/bin/python -m kahua_migration browser migrate
 ```
 
-Review `manifest.json`, `issues.json`, and `run-plan.json`. The plan does not
-open a browser or change Kahua. Add `--execute` to run, using a new output
-directory and the same journal:
+Review `manifest.json`, `issues.json`, and `run-plan.json` in the printed report
+directory. The plan does not open a browser or change Kahua. Add `--execute`
+to run, using a new output
+directory and the same journal. The examples below give `--out` explicitly so
+the result-check commands have a known report path; the directory is created
+automatically. Omitting `--out` uses a fresh timestamped directory instead.
 
 ```sh
 .venv/bin/python -m kahua_migration browser migrate \
-  --config migration.local.json \
-  --journal state/my-migration.sqlite \
   --ocr-backend vision \
   --out output/my-run-01 --execute
 ```
@@ -223,10 +266,7 @@ Check the report (success requires the literal boolean `true`):
 ### Windows plan, execution and result
 
 ```powershell
-& .\.venv\Scripts\python.exe -m kahua_migration browser migrate `
-  --config .\migration.local.json `
-  --journal .\state\my-migration.sqlite `
-  --out .\output\my-plan
+& .\.venv\Scripts\python.exe -m kahua_migration browser migrate
 ```
 
 Review `manifest.json`, `issues.json` and `run-plan.json`. Resolve audit errors
@@ -235,8 +275,6 @@ and review warnings before executing. In the same PowerShell session, with
 
 ```powershell
 & .\.venv\Scripts\python.exe -m kahua_migration browser migrate `
-  --config .\migration.local.json `
-  --journal .\state\my-migration.sqlite `
   --ocr-backend tesseract --ocr-executable "$ocr" `
   --out .\output\my-run-01 --execute
 $migrationExit = $LASTEXITCODE
@@ -257,10 +295,7 @@ To use a different input parent, pass its path on the command line:
 
 ```sh
 .venv/bin/python -m kahua_migration browser migrate \
-  --source-root "/path/to/customer drawings" \
-  --config migration.local.json \
-  --journal state/my-migration.sqlite \
-  --out output/my-plan
+  --source-root "/path/to/customer drawings"
 ```
 
 On Windows, add `--source-root "D:\Migration\drawings"` to either PowerShell
@@ -346,8 +381,7 @@ journal. Only the output directory changes. On macOS:
 
 ```sh
 .venv/bin/python -m kahua_migration browser migrate \
-  --config migration.local.json \
-  --journal state/my-migration.sqlite --ocr-backend vision \
+  --ocr-backend vision \
   --out output/my-run-02 --execute
 ```
 
@@ -355,17 +389,17 @@ In Windows PowerShell:
 
 ```powershell
 & .\.venv\Scripts\python.exe -m kahua_migration browser migrate `
-  --config .\migration.local.json `
-  --journal .\state\my-migration.sqlite `
   --ocr-backend tesseract --ocr-executable "$ocr" `
   --out .\output\my-run-02 --execute
 ```
 
-If the original run used `--source-root` or `--version-sets`, include the same
-options when resuming. Repeat the result check against `my-run-02`. Keep an
-in-progress migration on its original machine and source paths. Manifests
-include the resolved source root and records include platform-specific relative paths. Cross-platform
-journal relocation is not implemented or validated.
+If the original run used `--source-root`, `--version-sets`, `--config` or
+`--journal`, include the same options when resuming. This also applies to runs
+started before the automatic defaults were introduced: keep their original
+configuration and journal paths. Repeat the result check against `my-run-02`.
+Keep an in-progress migration on its original machine and source paths.
+Manifests include the resolved source root and records include platform-specific
+relative paths. Cross-platform journal relocation is not implemented or validated.
 
 An explicitly recognized file-download service error allows one read-only
 retry after its error dialogs are acknowledged. Both attempts recheck the

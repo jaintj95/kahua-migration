@@ -9,8 +9,9 @@
     "current_folder": "Drawings/Current",
     "target": {
       "transport": "browser",
-      "environment": "https://devproductionlaunch.kahua.com/",
-      "domain_name": "Your domain",
+      "environment": "https://launch.kahua.com/",
+      "domain_name": "TDOT.ECPCS",
+      "folder_path": "Sheets",
       "project_policy": "find_or_create",
       "folder_policy": "find_or_create",
       "record_type": "Project"

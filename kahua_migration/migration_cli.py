@@ -1,14 +1,17 @@
 """Read the source CSV and automatically navigate the complete project queue."""
 
 import argparse
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sys
 import time
+from uuid import uuid4
 
 from .browser import BrowserError
 from .browser_auth import needs_sign_in
 from .browser_migration import MigrationRunner, project_scope
+from .browser_setup import ensure_config
 from .browser_visual import install_upload_input_fallback
 from .csv_config import validate_destination
 from .journal import Journal
@@ -43,10 +46,15 @@ def main(argv=None):
     parser.add_argument("--version-sets", type=Path,
                         help="Explicit CSV path (relative to the working directory); defaults to "
                              "<source-root>/version_sets.csv. Used alone, retains config source_root.")
-    parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--journal", type=Path, required=True)
+    parser.add_argument("--config", type=Path, default=Path("migration.local.json"),
+                        help="Local settings file; created with first-run prompts if missing (default: migration.local.json)")
+    parser.add_argument("--no-input", action="store_true",
+                        help="Use defaults without prompting when creating a missing configuration")
+    parser.add_argument("--journal", type=Path, default=Path("state/drawings.sqlite"),
+                        help="Reuse this progress journal on every resume (default: state/drawings.sqlite)")
     add_ocr_arguments(parser)
-    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--out", type=Path,
+                        help="Report directory (default: a new timestamped directory under output/drawings)")
     parser.add_argument("--project-uid", action="append")
     parser.add_argument("--user-data-dir", type=Path, default=Path("state/browser-profile"))
     parser.add_argument("--channel", choices=("chromium", "chrome", "msedge"), default="chrome")
@@ -56,6 +64,11 @@ def main(argv=None):
     try:
         if not 1 <= args.sign_in_timeout <= 3600:
             raise InputError("Sign-in timeout must be between 1 and 3600 seconds")
+        args.config = ensure_config(args.config, no_input=args.no_input)
+        if args.out is None:
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            args.out = Path("output/drawings") / f"{stamp}-{uuid4().hex[:8]}"
+        print(f"Settings: {args.config.resolve()}\nProgress journal: {args.journal.resolve()}\nReports: {args.out.resolve()}", flush=True)
         source_root = args.source_root
         version_sets = args.version_sets
         if version_sets is None:

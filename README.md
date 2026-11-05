@@ -78,6 +78,14 @@ finish in `upload_sequence` order before the next project starts. Both orders
 appear in the plan for review.
 Sign-in and MFA are manual when Kahua requires them.
 
+On first run, `browser migrate` prompts for shared settings and creates
+`migration.local.json` automatically. Enter accepts each default: production
+`https://launch.kahua.com/`, domain `TDOT.ECPCS`, destination `Sheets`, and
+creation of missing projects/folders enabled. `--no-input` accepts defaults
+without prompts. Existing settings are reused unchanged. The command manages
+the progress journal (`state/drawings.sqlite`) and creates a fresh report
+directory under `output/drawings/`; those files need no manual setup.
+
 The drawings browser command now has a shared offline OCR adapter: the existing
 Swift/Apple Vision helper on macOS and native Tesseract 5 on Windows. OCR locates
 canvas controls and reads target metadata; source metadata still comes from
@@ -171,18 +179,16 @@ flowchart LR
 The core uses Python 3.10+ and the standard library.
 
 ```sh
-python3 -m kahua_migration audit \
-  --version-sets drawings/version_sets.csv \
-  --source-root drawings \
-  --config migration.example.json \
+python3 -m kahua_migration browser migrate \
   --out output/preflight
-
-python3 -m kahua_migration plan \
-  --manifest output/preflight/manifest.json \
-  --out output/plan
 ```
 
-Audit exit code 2 means the report contains errors that block one or more projects; the reports are still written. `plan` makes no network requests. Browser destinations are mapped by environment, domain name, exact project number/name and folder path; API IDs and OAuth credentials are not required.
+Without `--execute`, this command creates settings if needed, audits the input
+and writes `manifest.json`, `issues.json` and `run-plan.json` without opening a
+browser or making network requests. Exit code 2 means audit errors block one
+or more projects; the reports are still written. Browser destinations are
+mapped by environment, domain name, exact project number/name and folder path;
+API IDs and OAuth credentials are not required.
 
 The supplied complete source sample contains 166 historical PDFs in three batches: **61, 52, 53** files, with **64 current sheets**. The CSV also names a second project whose source files are absent. Production destination mappings are not supplied. Five `Current` PDFs have different hashes from the corresponding historical PDFs. Their first-page renders matched at 36 DPI, which is limited visual evidence, not proof of byte-level or annotation equivalence. These differences remain in the audit.
 
