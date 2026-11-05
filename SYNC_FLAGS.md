@@ -378,7 +378,10 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
   status, exact project and Folders. A new fixture reproduces the exact error
   before the fix and passes all 23 scenarios after it. All 198 checks across
   eight local suites pass in macOS PowerShell 7.6.9; all 20 PowerShell files
-  parse. Windows CI and live Kahua validation remain pending for this fix.
+  parse. [Windows CI run 42108994927](https://github.com/jaintj95/kahua-migration/actions/runs/42108994927)
+  passes **247 checks across eleven suites** and parses **20 scripts** in
+  Windows PowerShell `5.1.26100.33648` at commit `4be5fd7`.
+  The controls are simulated; live Kahua validation remains pending for this fix.
   Close the settings dialog left open by this failed Check, then rerun the
   updated launcher with the same CSV and batch history. It must pass Check
   before offering APPLY.
@@ -397,8 +400,10 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
   navigation suite. Initial CI exposed two fixture assumptions about UIA
   control-type values and default exception text; the fixture now uses numeric
   control IDs and explicitly reproduces the supplied error message.
-  The recovery fix has not been deployed to the VM or checked against live
-  Kahua. The log does not establish why Kahua invalidated the original element.
+  A later user-supplied production Check reached Local Files after project
+  selection, then failed the settings-context check described above. That
+  attempt did not complete Check or Execute and does not validate stale-read
+  recovery. The earlier log does not establish why Kahua invalidated its element.
 - The launcher/history suite passes 20 simulated scenarios on macOS PowerShell
   7.6.9 and Windows PowerShell 5.1, including
   automatic reuse, changed batches, preserved logs, legacy state, locks,
