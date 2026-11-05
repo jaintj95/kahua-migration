@@ -84,9 +84,15 @@ does not guess based on folder location or a placeholder UID.
 
 ## Run
 
-Commands below run from the repository root. Set `Environment` to the exact
-label on the Kahua window; **DEVPRODUCTION** is the test environment, not an
-assumed production destination. Keep state outside every Kahua sync directory.
+Commands below run from the repository root. `Environment` is mandatory and
+cannot be blank. It declares the intended environment and binds the saved run
+state to it; it does not launch or switch environments. Use `DEVPRODUCTION` for
+the test client and `PRODUCTION` for the production client (`launch.kahua.com`).
+Production has no environment footer: the runner verifies that the open
+window's executable belongs to the registered `Kahua.Windows_3hchyjmf292n6`
+package. Missing labels, unknown packages, and a running devproduction client
+are not accepted as proof of production. Other environments still require one
+exact matching text label. Keep state outside every Kahua sync directory.
 
 Plan the supplied CSV without touching Kahua:
 
@@ -127,6 +133,91 @@ same CSV and a **new state directory** for the opposite action:
 
 For a `sync_enabled` CSV, use `-Action FromCsv`. Plan is the default mode when
 `-Mode` is omitted; a mode must be changed to Execute before flags are written.
+
+### Production commands
+
+Use the production-aware adapter introduced in commit `37317c5` or later.
+That fix is already installed in the supervised VM's repository. An older
+copy can still reject production because it expects a visible environment
+label. Keep `Environment = 'PRODUCTION'`, even when the client shows no label;
+do not replace it with a blank string or the launch URL. Sign in to the
+production Windows client manually before Check.
+
+For a **new production batch**, run this setup once. Retain the resulting state
+directory for Plan, Check, Execute, and retries with unchanged inputs:
+
+```powershell
+Set-Location -LiteralPath "$env:USERPROFILE\Desktop\Projects\kahua-migration"
+$runner = '.\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1'
+$kahuaRun = @{
+    CsvPath = "$env:USERPROFILE\Downloads\sameProjectsEnableSync.csv"
+    Environment = 'PRODUCTION'
+    Action = 'Enable'
+    StateRoot = Join-Path $env:USERPROFILE (
+        'Documents\KahuaRuns\production-enable-' + (Get-Date -Format yyyyMMdd-HHmmss)
+    )
+}
+```
+
+For the **existing production batch on the supervised VM**, use this setup
+instead. It restores the saved folder after reopening PowerShell; it must be
+used only with that batch's unchanged CSV, domain, environment, and action:
+
+```powershell
+Set-Location -LiteralPath "$env:USERPROFILE\Desktop\Projects\kahua-migration"
+$runner = '.\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1'
+$kahuaRun = @{
+    CsvPath = "$env:USERPROFILE\Downloads\sameProjectsEnableSync.csv"
+    Environment = 'PRODUCTION'
+    Action = 'Enable'
+    StateRoot = "$env:USERPROFILE\Documents\KahuaRuns\production-enable-20261105-204341"
+}
+```
+
+With either setup, run Plan and Check. Each invocation starts a fresh Windows
+PowerShell process so cached modules cannot hide a deployed update:
+
+```powershell
+powershell.exe -NoProfile -File $runner `
+    -CsvPath $kahuaRun.CsvPath -Environment $kahuaRun.Environment `
+    -Action $kahuaRun.Action -StateRoot $kahuaRun.StateRoot -Mode Plan
+if ($LASTEXITCODE -ne 0) { throw 'Plan failed. Resolve the reported error before continuing.' }
+
+powershell.exe -NoProfile -File $runner `
+    -CsvPath $kahuaRun.CsvPath -Environment $kahuaRun.Environment `
+    -Action $kahuaRun.Action -StateRoot $kahuaRun.StateRoot -Mode Check
+if ($LASTEXITCODE -ne 0) { throw 'Check failed. Do not run Execute; resolve the reported error first.' }
+```
+
+After Check exits with code 0 and its report has `status: checked`, enable:
+
+```powershell
+powershell.exe -NoProfile -File $runner `
+    -CsvPath $kahuaRun.CsvPath -Environment $kahuaRun.Environment `
+    -Action $kahuaRun.Action -StateRoot $kahuaRun.StateRoot -Mode Execute
+if ($LASTEXITCODE -ne 0) { throw 'Execute failed. Preserve this state and inspect the attempt report before retrying.' }
+```
+
+The last supervised production Check remains blocked by Kahua's **Unable to
+sync / project of the same name already synced** warning. Resolve the existing
+sync mapping conflict with the Kahua administrator, then close the dialog and
+rerun Check. Clearing the message alone does not resolve the conflict. Do not
+use account Reset or delete/rename existing synced folders to bypass it.
+
+Assign a new batch's timestamped `StateRoot` once and retain its value; do not
+generate a new timestamp on each retry. Never reuse the previous
+`enable-batch-001` DEVPRODUCTION state for this production batch. A state-directory
+mismatch means that environment, project list, domain, or desired switch values
+differ from its saved binding. Preserve that directory for recovery and choose
+a new one for the changed batch. Do not delete or edit `binding.json` to bypass
+the check. Plan validates inputs and state only; it does not prove desktop or
+production compatibility.
+
+Read the report path printed by each invocation. Check success is `checked`;
+Execute success is `flags-verified`, with reopened readbacks in its project
+receipts. Neither status establishes that file transfers finished. `failed`
+or an `uncertain` row requires recovery, not another blind toggle or Save.
+Keep all attempts and their `progress.log` files.
 
 ## Results and recovery
 
@@ -184,6 +275,14 @@ action and state directory. The runner freshly reads the current state before
 setting it; it does not blindly toggle the switch or trust an old success.
 Do not delete state to retry. A changed CSV or opposite action needs new state.
 
+If Kahua displays **Unable to sync** because a project with the same name is
+already synced, the runner reports that conflict and stops. A warning already
+open at startup is also detected. Have the Kahua administrator reconcile the
+existing project/sync mapping before retrying; do not use account Reset or
+delete/rename synced folders to bypass it. The warning alone does not identify
+the conflicting mapping. Preserve the same CSV and state directory, resolve
+and close the dialog, and rerun Check before Execute.
+
 The runner and the full migration worker share a desktop mutex and must not run
 at the same time. It never copies, moves, deletes, downloads, hashes, or cleans
 up project files and never claims to diagnose Kahua's transfer mechanism.
@@ -202,12 +301,20 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
   logs, Unicode names, and rate-limited wait messages. A separate suite passes
   16 geometry/read scenarios covering incomplete rectangles, expired controls,
   fresh breadcrumb lookup, temporarily absent breadcrumbs, deadline handling,
-  and unrelated errors.
+  and unrelated errors. Another 18 environment identity checks cover unlabelled
+  production, wrong or missing package registration, another executable path,
+  unavailable process/package reads, multiple windows, fresh identity checks,
+  and unchanged exact-label checks for nonproduction environments.
+  A further 16 Local Files error checks cover same-name and generic warnings,
+  duplicate accessibility objects, startup/open-settings refusal, delayed
+  warnings, background Folders controls, delayed readiness, and ambiguous or
+  disabled controls.
   These fixtures use a simulated desktop; live observations are recorded
   separately below.
-- All 13 PowerShell source/test files parse locally. The Windows PowerShell 5.1
-  CI workflow runs the flag suite alongside the existing copy, batch, and
-  coordinator fixtures. See [Windows fixture runs](https://github.com/jaintj95/kahua-migration/actions/workflows/windows-local-sync.yml)
+- The Windows PowerShell 5.1 workflow parses all PowerShell source/test files.
+  It runs the environment identity and Local Files error suites as well as
+  the flag suite alongside the existing copy, batch, and coordinator fixtures.
+  See [Windows fixture runs](https://github.com/jaintj95/kahua-migration/actions/workflows/windows-local-sync.yml)
   for the result at a particular published commit.
 - **Supervised flag pilot passed November 5.** The upgraded Cloud PC connected
   successfully with 4 vCPUs / 16 GB RAM. All five projects passed a live
@@ -237,6 +344,25 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
   The VM record is `Documents\KahuaDebug-20261105\debug-handoff-20261105.json`;
   the corrected CSV and original failed reports remain available there and
   in their respective run directories.
+- **Production Check on November 5:** the production client exposed no
+  `PRODUCTION` footer, so the original environment-label check failed. The
+  updated adapter verified the active executable against the registered
+  production package, verified the CSV domain, found the exact project, and
+  read the account state as running. Kahua then blocked Local Files with
+  **Unable to sync**, stating that a project of the same name was already
+  synced. The fixed error handler also detected the still-open warning during
+  a subsequent Check and recorded it in `result.json` rather than a generic
+  Folders timeout. Production Enable was **not executed**; no project flag,
+  existing local folder, or account sync setting was changed by these checks.
+  The previous DEVPRODUCTION batch state was retained; the new production
+  state is `Documents\KahuaRuns\production-enable-20261105-204341` on the VM.
+  All **154 fixture checks** passed in Windows PowerShell 5.1 after deployment
+  (15 local-copy, 26 batch, 8 coordinator, 55 flag, 16 geometry, 18 environment,
+  and 16 sync-error checks). Source parsing and hashes are saved under that
+  state directory in `final-checks-20261105-210422\validation.json`; these
+  fixtures simulate UI/server behavior and do not establish live Enable.
+  Production flag writes remain unvalidated until the existing sync conflict
+  is resolved and Check passes.
 - Earlier failed attempts remain recorded. The first Disable stopped during
   close with an Unsaved Changes Alert even though Off persisted. The first
   Enable stopped because the Save waiter rejected a temporarily disabled
