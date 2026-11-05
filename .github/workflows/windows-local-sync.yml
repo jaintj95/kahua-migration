@@ -55,6 +55,8 @@ jobs:
         run: .\Test-KahuaFlagRecovery.ps1
       - name: Check project-open recovery with fresh UI elements
         run: .\Test-KahuaFlagProjectNavigation.ps1
+      - name: Check settings context after the account menu closes
+        run: .\Test-KahuaFlagSettingsContext.ps1
       - name: Check production client identity with simulated packages
         run: .\Test-KahuaFlagEnvironment.ps1
       - name: Check Local Files error handling with simulated controls

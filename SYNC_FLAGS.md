@@ -124,6 +124,22 @@ If Windows blocks downloaded scripts, use your organization's approved script
 execution policy. The launcher does not change that policy. It starts a fresh
 Windows PowerShell process when launched through the `.cmd` file.
 
+If a downloaded ZIP's launcher is rejected as **not digitally signed**, check
+`Get-ExecutionPolicy -List`. Under `RemoteSigned`, trusted downloaded scripts
+can be unblocked without changing that policy. From the reviewed repository's
+root directory in Windows PowerShell:
+
+```powershell
+Get-ChildItem -LiteralPath .\scripts\windows-local-sync -File |
+  Where-Object { $_.Extension -in '.ps1', '.psm1' } |
+  Unblock-File
+& .\Start-SyncFlags.cmd
+```
+
+`AllSigned` still requires scripts signed by a trusted publisher; unblocking
+does not meet that requirement. See
+[Microsoft's execution-policy guidance](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-5.1#manage-signed-and-unsigned-scripts).
+
 ## Automatic history and retries
 
 `StateRoot` is **optional**. By default, each batch's history lives under
@@ -353,6 +369,19 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
 
 ## Validation and current limits
 
+- **November 6 Local Files context fix:** the supplied Check attempt
+  `20261105T205104Z-45bbfe42` opened the first project, then stopped at
+  `settings-open` because the active view had no `TitleText` named `My settings`.
+  This happened before APPLY, any switch change or Save. The recovery code had
+  added an extra lookup for the Account menu entry after navigating into Local
+  Files. It now checks the open dialog's Close/Save/Cancel controls, account
+  status, exact project and Folders. A new fixture reproduces the exact error
+  before the fix and passes all 23 scenarios after it. All 198 checks across
+  eight local suites pass in macOS PowerShell 7.6.9; all 20 PowerShell files
+  parse. Windows CI and live Kahua validation remain pending for this fix.
+  Close the settings dialog left open by this failed Check, then rerun the
+  updated launcher with the same CSV and batch history. It must pass Check
+  before offering APPLY.
 - **November 6 project-open recovery fix:** the supplied production Check log
   stopped at `project-open` when `KahuaDesktop.psm1`'s `FindAll` raised a wrapped
   `ElementNotAvailableException`. Build `30725ef` had Local Files recovery but

@@ -335,10 +335,15 @@ function Read-KahuaFlagSettingsContext {
     Assert-KahuaFlagProject -Identity $Identity
     Assert-KahuaFlagNoSyncError
     Assert-KahuaFlagNoUnsavedWarning
-    [void](Find-KahuaControl -Id TitleText -Name 'My settings' -Type Text)
+    # TitleText/My settings is the Account drawer entry used to open settings.
+    # It need not exist in the active Local Files modal after navigation.
+    # Verify the open dialog and its Local Files controls instead of that menu.
+    [void](Find-KahuaControl -Id CloseModal -Type Button)
     Write-KahuaFlagProgress $LogContext 'account-state' 'Waiting for Local Files account status.'
     $state = Wait-KahuaLocalFilesState
     if ($state -eq 'unconfigured') { throw 'Enable Local Files for the account manually once, then rerun. The project flag runner never initializes or resets account sync.' }
+    [void](Find-KahuaControl -Name Save -Type Button)
+    [void](Find-KahuaControl -Name Cancel -Type Button)
     Write-KahuaFlagProgress $LogContext 'settings-project' "Account sync=$state. Verifying the project shown in Local Files."
     $change = Wait-KahuaControl -Name Change -Type Button
     $container = $change; $matched = $false
