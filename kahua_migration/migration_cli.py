@@ -59,7 +59,8 @@ def main(argv=None):
     parser.add_argument("--user-data-dir", type=Path, default=Path("state/browser-profile"))
     parser.add_argument("--channel", choices=("chromium", "chrome", "msedge"), default="chrome")
     parser.add_argument("--sign-in-timeout", type=int, default=600)
-    parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--execute", action="store_true",
+                        help="Open the browser, wait for sign-in, and upload. Without this flag, only write a local plan.")
     args = parser.parse_args(argv)
     try:
         if not 1 <= args.sign_in_timeout <= 3600:
@@ -87,6 +88,8 @@ def main(argv=None):
                 runnable.append(project)
         if not args.execute:
             print(f"Plan saved to {args.out / 'run-plan.json'}; {len(runnable)} of {len(projects)} projects ready. No browser opened.")
+            print("This was a plan-only run. Review issues.json and run-plan.json in the report directory. "
+                  "To open the browser and start uploading, rerun the same command with --execute.")
             return 0 if len(runnable) == len(projects) else 2
         if not runnable:
             raise InputError("No selected project passed the source audit")

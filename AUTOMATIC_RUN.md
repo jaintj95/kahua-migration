@@ -265,12 +265,16 @@ Check the report (success requires the literal boolean `true`):
 
 ### Windows plan, execution and result
 
+This first command only writes the audit and plan. **It does not open Chrome.**
+Adding `--source-root` changes the input directory; it does not start execution.
+
 ```powershell
 & .\.venv\Scripts\python.exe -m kahua_migration browser migrate
 ```
 
 Review `manifest.json`, `issues.json` and `run-plan.json`. Resolve audit errors
-and review warnings before executing. In the same PowerShell session, with
+and review warnings before executing. **`--execute` opens Chrome and starts
+the migration after sign-in.** In the same PowerShell session, with
 `$ocr` set as above:
 
 ```powershell
@@ -282,6 +286,12 @@ $report = Get-Content -Raw -Encoding UTF8 .\output\my-run-01\run-report.json | C
 $report | Format-List
 if ($migrationExit -ne 0 -or $report.passed -ne $true) { throw 'Migration did not pass; inspect the reports and preserve the journal.' }
 ```
+
+The script launches installed Google Chrome automatically in its own window,
+using the local `state/browser-profile/` profile. No separate browser launch,
+connection command or remote-debugging port is needed for `browser migrate`.
+Sign in and complete MFA in that window when prompted. A Chrome window you
+already have open is not the migration window.
 
 Exit 0 means success, 2 means audit errors or a queue that did not fully pass,
 and 1 means setup/execution stopped with an error. If setup stops before a
@@ -298,14 +308,23 @@ quoted example path with the actual location of your `drawings` directory.
 **Windows (PowerShell):**
 
 ```powershell
+# Plan only; Chrome will not open.
 & .\.venv\Scripts\python.exe -m kahua_migration browser migrate --source-root "D:\Migration\drawings"
+
+# After reviewing the plan, open Chrome and upload from the same source directory.
+& .\.venv\Scripts\python.exe -m kahua_migration browser migrate --source-root "D:\Migration\drawings" --execute
 ```
 
 **macOS (Terminal):**
 
 ```sh
+# Plan only; Chrome will not open.
 .venv/bin/python -m kahua_migration browser migrate \
   --source-root "/path/to/customer drawings"
+
+# After reviewing the plan, open Chrome and upload from the same source directory.
+.venv/bin/python -m kahua_migration browser migrate \
+  --source-root "/path/to/customer drawings" --execute
 ```
 
 The Windows virtual environment uses `.venv\Scripts\python.exe`; the macOS
