@@ -10,7 +10,12 @@ param(
     [string]$Domain,
     [ValidateSet('Enable','Disable','FromCsv')][string]$Action = 'FromCsv',
     [ValidateSet('Plan','Check','Execute')][string]$Mode = 'Plan',
-    [Parameter(Mandatory=$true)][string]$StateRoot
+    [string]$StateRoot,
+    [string]$HistoryRoot,
+    [ValidateRange(0,3)][int]$RecoveryAttempts = 2,
+    # The launcher pins its reviewed input before even the first Plan creates
+    # state. This also prevents a concurrent CSV edit from poisoning a batch ID.
+    [Parameter(DontShow=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$ExpectedInputHash
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -26,14 +31,23 @@ function Save-FlagReport {
     $report.progress_log=$log.Path
     $report.last_step=$log.Step
     $report.last_progress_at_utc=$log.LastProgressAtUtc
+    $report.recoveries=@($log.Recoveries.ToArray())
     Write-KahuaFlagJson (Join-Path $attemptRoot 'result.json') $report
 }
 try {
     Write-KahuaFlagProgress $log 'validate' "Starting $Mode / $Action in $Environment. CSV: $CsvPath"
     $rows = @(Read-KahuaSyncFlagCsv -CsvPath $CsvPath -Environment $Environment -Domain $Domain -Action $Action)
+    $inputHash=Get-KahuaFlagInputHash -Rows $rows
+    if ($ExpectedInputHash -and $inputHash -cne $ExpectedInputHash) {
+        throw 'The CSV or requested inputs changed after launcher review. No settings were changed by this attempt. Start the launcher again to review the current batch.'
+    }
+    $report.input_hash=$inputHash
     $log.Total=$rows.Count
-    Write-KahuaFlagProgress $log 'validate' "CSV accepted: $($rows.Count) project(s). Validating state directory: $StateRoot"
-    $state = Resolve-KahuaFlagStatePath $StateRoot
+    $state = Resolve-KahuaFlagBatchState -Rows $rows -StateRoot $StateRoot -HistoryRoot $HistoryRoot
+    $stateKind = if ($StateRoot) { 'explicit' } else { 'automatic' }
+    $stateAction = if (Test-Path -LiteralPath (Join-Path $state 'binding.json')) { 'Reusing' } else { 'Creating' }
+    Write-KahuaFlagProgress $log 'validate' "CSV accepted: $($rows.Count) project(s). $stateAction $stateKind batch history: $state"
+    $report.state_root=$state; $report.state_selection=$stateKind; $report.recovery_attempts=$RecoveryAttempts
     $csvFull = (Resolve-Path -LiteralPath $CsvPath).ProviderPath
     if ($csvFull.StartsWith($state.TrimEnd('\','/') + [IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) {
         throw 'Keep the source CSV outside the state directory.'
@@ -55,9 +69,9 @@ try {
     $binding = [ordered]@{schema=2;projects=$rows}
     $bindingPath = Join-Path $state 'binding.json'
     if (Test-Path -LiteralPath $bindingPath) {
-        $previous = Get-Content -LiteralPath $bindingPath -Raw | ConvertFrom-Json
+        $previous = Get-Content -LiteralPath $bindingPath -Raw -Encoding UTF8 | ConvertFrom-Json
         if (($previous | ConvertTo-Json -Depth 20 -Compress) -cne ($binding | ConvertTo-Json -Depth 20 -Compress)) {
-            throw 'This state directory belongs to different input values. Keep it for recovery; use a new StateRoot for a changed batch or opposite action.'
+            throw 'This state directory belongs to different input values. Keep it for recovery. For a changed batch or opposite action, omit -StateRoot to use automatic history, or supply a new StateRoot. If inputs changed during launcher review, start the launcher again to review them.'
         }
     } else { Write-KahuaFlagJson $bindingPath $binding }
     $report.projects = @($rows | ForEach-Object {
@@ -103,7 +117,7 @@ try {
         $current.status = 'checking'; Save-FlagReport
         $identity = Select-KahuaFlagProject -Environment $Environment -Domain $row.domain -Name $row.project_name -LogContext $log
         Write-KahuaFlagProgress $log 'read' 'Reading Local Files and reopening settings to confirm the current switch.'
-        $receipt = Get-KahuaProjectFlag -Identity $identity -LogContext $log
+        $receipt = Get-KahuaProjectFlag -Identity $identity -LogContext $log -RecoveryAttempts $RecoveryAttempts
         Assert-KahuaSyncFlagReceipt -Receipt $receipt -Row $row -RequireRunning:($Mode -eq 'Execute')
         $identities[$row.row] = $identity
         Write-KahuaFlagProgress $log 'checked' "Folders=$($receipt.selection); account sync=$($receipt.account_sync_state); reopened=$($receipt.reopened)."
@@ -124,7 +138,7 @@ try {
             $identity = Select-KahuaFlagProject -Environment $Environment -Domain $row.domain -Name $row.project_name -LogContext $log
             if ($identity.display -cne $identities[$row.row].display) { throw 'Project identity changed after preflight.' }
             Write-KahuaFlagProgress $log 'apply' "Setting Folders=$desired, then verifying after reopening settings."
-            $receipt = Set-KahuaProjectFlag -Identity $identity -Enabled $row.sync_enabled -LogContext $log
+            $receipt = Set-KahuaProjectFlag -Identity $identity -Enabled $row.sync_enabled -LogContext $log -RecoveryAttempts $RecoveryAttempts
             Assert-KahuaSyncFlagReceipt -Receipt $receipt -Row $row -RequireDesired -RequireRunning
             Write-KahuaFlagProgress $log 'verified' "Folders=$($receipt.selection); account sync=$($receipt.account_sync_state); reopened=$($receipt.reopened)."
             $current.receipt = $receipt; $current.status = 'verified'; Save-FlagReport

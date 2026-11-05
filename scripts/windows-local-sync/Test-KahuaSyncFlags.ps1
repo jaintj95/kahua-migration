@@ -399,6 +399,7 @@ $saveHarness=New-Module -Name KahuaFlagSaveFixture -ArgumentList ($saveFunctions
     param($Source)
     . ([scriptblock]::Create($Source))
     function Reset-SaveFixture([string]$Mode) { $script:mode=$Mode; $script:reads=0; $script:clicks=0 }
+    function Assert-KahuaFlagNoSyncError { }
     function Get-KahuaWindow { 'fixture-window' }
     function Find-KahuaControl {
         param($Name,$Type,$Id,$Root,[switch]$All)

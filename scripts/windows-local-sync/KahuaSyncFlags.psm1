@@ -13,6 +13,7 @@ function New-KahuaFlagLogContext {
         SinceMessage=[Diagnostics.Stopwatch]::StartNew()
         LastProgressAtUtc=''
         Pending=(New-Object 'System.Collections.Generic.List[string]')
+        Recoveries=(New-Object 'System.Collections.Generic.List[object]')
     }
 }
 
@@ -116,9 +117,9 @@ function Set-KahuaFlagDomainBinding {
     $binding = [ordered]@{schema=1;environment=$Rows[0].environment;domain=$ActualDomain}
     $path = Join-Path $StateRoot 'selected-domain.json'
     if (Test-Path -LiteralPath $path) {
-        $previous = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        $previous = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
         if (($previous | ConvertTo-Json -Compress) -cne ($binding | ConvertTo-Json -Compress)) {
-            throw 'The selected domain differs from this saved run. Select the original domain or use a new StateRoot.'
+            throw 'The selected domain differs from this saved run. Select the original domain, or supply -Domain with the intended exact domain to select separate automatic history. For an explicit StateRoot, use a new folder for the changed domain.'
         }
     } else { Write-KahuaFlagJson $path $binding }
     foreach ($row in $Rows) { $row.domain = $ActualDomain }
@@ -169,6 +170,64 @@ function Write-KahuaFlagJson {
     [IO.File]::WriteAllText($temporary, ($Value | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
     if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temporary,$Path,[NullString]::Value) }
     else { [IO.File]::Move($temporary,$Path) }
+}
+
+function Get-KahuaFlagHistoryRoot {
+    $base = [Environment]::GetFolderPath('LocalApplicationData')
+    if ([string]::IsNullOrWhiteSpace($base)) {
+        throw 'Cannot locate local application data. Supply -HistoryRoot with a local folder outside Kahua sync.'
+    }
+    return (Join-Path (Join-Path $base 'KahuaMigration') 'SyncFlags')
+}
+
+function Get-KahuaFlagInputHash {
+    param([object[]]$Rows)
+    # Use the same normalized intent as binding.json. Filenames, CSV formatting,
+    # and ignored UIDs do not identify a batch. Row order remains significant.
+    # Keep the full digest and still validate binding.json under the state lock.
+    $binding = [ordered]@{schema=2;projects=@($Rows)} | ConvertTo-Json -Depth 20 -Compress
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $digest = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($binding))).Replace('-','').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    return $digest
+}
+
+function Resolve-KahuaFlagBatchState {
+    param([object[]]$Rows, [string]$StateRoot, [string]$HistoryRoot)
+    if ($StateRoot -and $HistoryRoot) { throw 'Choose -StateRoot for an existing batch or -HistoryRoot for automatic history, not both.' }
+    if ($StateRoot) { return (Resolve-KahuaFlagStatePath $StateRoot) }
+    if (-not $HistoryRoot) { $HistoryRoot = Get-KahuaFlagHistoryRoot }
+    $digest=Get-KahuaFlagInputHash -Rows $Rows
+    return (Resolve-KahuaFlagStatePath (Join-Path $HistoryRoot ('batch-'+$digest)))
+}
+
+function Test-KahuaFlagTransientFailure {
+    param([Exception]$Exception)
+    # Do not infer recoverability from an error message. Identity, permissions,
+    # duplicate names, dirty settings and application warnings must stop.
+    while ($null -ne $Exception) {
+        if ($Exception.GetType().FullName -eq 'System.Windows.Automation.ElementNotAvailableException') { return $true }
+        if ($Exception -is [TimeoutException] -and $Exception.Data['KahuaFlagReadTimeout'] -eq $true) { return $true }
+        $Exception = $Exception.InnerException
+    }
+    return $false
+}
+
+function Invoke-KahuaFlagReadRecovery {
+    param([Parameter(Mandatory=$true)][scriptblock]$Read,
+        [ValidateRange(0,3)][int]$RecoveryAttempts=2, [hashtable]$LogContext,
+        [string]$Operation='Reading Kahua', [ValidateRange(0,5000)][int]$DelayMilliseconds=500)
+    # Only wrap fresh, read-only snapshots. Never wrap navigation, toggle or Save.
+    for ($retry=0; ; $retry++) {
+        try { return (& $Read) }
+        catch {
+            if ($retry -ge $RecoveryAttempts -or -not (Test-KahuaFlagTransientFailure $_.Exception)) { throw }
+            $event=[pscustomobject]@{operation=$Operation;retry=$retry+1;error=$_.Exception.Message;at_utc=[DateTime]::UtcNow.ToString('o')}
+            if ($LogContext) { $LogContext.Recoveries.Add($event) }
+            Write-KahuaFlagProgress $LogContext 'read-recovery' "$Operation`: temporary UI read failure; retry $($retry+1)/$RecoveryAttempts." -Level WARN
+            Start-Sleep -Milliseconds $DelayMilliseconds
+        }
+    }
 }
 
 function Resolve-KahuaFlagStatePath {

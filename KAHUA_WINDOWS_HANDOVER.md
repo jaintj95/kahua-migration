@@ -26,6 +26,15 @@ all five projects passed a live read-only Check, including nested projects.
 A separate test CSV corrected `222 - Bellevue Park` to Kahua's exact name
 `221 - Bellevue Park`; Doe's original CSV is preserved.
 
+The guided `Start-SyncFlags.cmd` launcher now manages history automatically,
+checks the reviewed batch before APPLY, and retains the explicit `StateRoot`
+option for legacy runs. Recognized temporary reads get bounded recovery;
+Save reconciliation never repeats a toggle or Save. Local simulated launcher
+and recovery checks pass, but this new behavior still needs Windows CI and
+live client validation. The production same-name sync conflict remains an
+application issue; automatic history does not resolve it. See
+[the current limits and recovery rules](SYNC_FLAGS.md#bounded-recovery).
+
 After the user returned VM access, the corrected runner completed Seattle
 **On to Off at 02:02:01 IST, then Off to On at 02:03:11 IST on November 5**.
 Both runs saved, closed, reopened, and returned `flags-verified`. Seattle was

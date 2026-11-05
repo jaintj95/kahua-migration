@@ -4,10 +4,12 @@ on:
   push:
     branches: [main, 'codex/**']
     paths:
+      - 'Start-SyncFlags.cmd'
       - 'scripts/windows-local-sync/**'
       - '.github/workflows/windows-local-sync.yml'
   pull_request:
     paths:
+      - 'Start-SyncFlags.cmd'
       - 'scripts/windows-local-sync/**'
       - '.github/workflows/windows-local-sync.yml'
   workflow_dispatch:
@@ -47,6 +49,10 @@ jobs:
         run: .\Test-KahuaSyncCoordinator.ps1
       - name: Check project sync flags with simulated Kahua
         run: .\Test-KahuaSyncFlags.ps1
+      - name: Check launcher and automatic history with simulated Kahua
+        run: .\Test-KahuaFlagLauncher.ps1
+      - name: Check bounded recovery without repeated Save
+        run: .\Test-KahuaFlagRecovery.ps1
       - name: Check production client identity with simulated packages
         run: .\Test-KahuaFlagEnvironment.ps1
       - name: Check Local Files error handling with simulated controls
