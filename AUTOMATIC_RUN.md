@@ -283,9 +283,10 @@ In Windows PowerShell:
   --out .\output\my-run-02 --execute
 ```
 
-Repeat the result check against `my-run-02`. Do not move an in-progress
-migration between machines: manifests and journal identities include resolved
-local source paths. Cross-machine journal relocation is not implemented.
+Repeat the result check against `my-run-02`. Keep an in-progress migration on
+its original machine and source paths. Manifests include the resolved source
+root and records include platform-specific relative paths. Cross-platform
+journal relocation is not implemented or validated.
 
 An explicitly recognized file-download service error allows one read-only
 retry after its error dialogs are acknowledged. Both attempts recheck the

@@ -14,6 +14,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -188,7 +189,9 @@ class OcrEngine:
         if self.backend == "tesseract":
             _pillow()
             version = _run([self.executable, "--version"])
-            if not version.lower().startswith("tesseract 5."):
+            # UB Mannheim's native Windows releases report "tesseract v5.x";
+            # other builds use "tesseract 5.x". Both are version 5 engines.
+            if not re.match(r"tesseract\s+v?5\.", version.strip(), re.IGNORECASE):
                 raise BrowserError("The Tesseract OCR backend requires Tesseract 5.x")
             languages = _run([self.executable, "--list-langs"])
             if "eng" not in languages.splitlines():

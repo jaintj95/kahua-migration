@@ -154,8 +154,10 @@ class OcrResolutionTests(unittest.TestCase):
             with patch("kahua_migration.ocr._pillow"), patch("kahua_migration.ocr._run", side_effect=outputs):
                 with self.assertRaises(BrowserError):
                     engine.check()
-        with patch("kahua_migration.ocr._pillow"), patch("kahua_migration.ocr._run", side_effect=["tesseract 5.5.0", "List:\neng\nosd\n"]):
-            engine.check()
+        for version in ("tesseract 5.5.0", "tesseract v5.4.0.20240606\r\n leptonica-1.84.1\r\n"):
+            with self.subTest(version=version), patch("kahua_migration.ocr._pillow"), \
+                    patch("kahua_migration.ocr._run", side_effect=[version, "List:\r\neng\r\nosd\r\n"]):
+                engine.check()
 
 
 if __name__ == "__main__":
