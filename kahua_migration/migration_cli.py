@@ -37,7 +37,12 @@ def wait_for_sign_in(page, seconds):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version-sets", type=Path, required=True)
+    parser.add_argument("--source-root", type=Path,
+                        help="Parent directory containing project folders and version_sets.csv; "
+                             "defaults to ./drawings when --version-sets is omitted. Overrides config source_root.")
+    parser.add_argument("--version-sets", type=Path,
+                        help="Explicit CSV path (relative to the working directory); defaults to "
+                             "<source-root>/version_sets.csv. Used alone, retains config source_root.")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--journal", type=Path, required=True)
     add_ocr_arguments(parser)
@@ -51,7 +56,12 @@ def main(argv=None):
     try:
         if not 1 <= args.sign_in_timeout <= 3600:
             raise InputError("Sign-in timeout must be between 1 and 3600 seconds")
-        manifest = audit(args.version_sets, args.config)
+        source_root = args.source_root
+        version_sets = args.version_sets
+        if version_sets is None:
+            source_root = source_root if source_root is not None else Path("drawings")
+            version_sets = source_root.expanduser() / "version_sets.csv"
+        manifest = audit(version_sets, args.config, source_root=source_root)
         atomic_json(args.out / "manifest.json", manifest)
         atomic_json(args.out / "issues.json", manifest["issues"])
         plan = build_plan(manifest, args.project_uid)

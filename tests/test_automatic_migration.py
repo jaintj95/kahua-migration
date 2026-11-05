@@ -1,8 +1,11 @@
 import copy
-from contextlib import ExitStack
+import io
 import json
+import os
+import shutil
 import tempfile
 import unittest
+from contextlib import ExitStack, redirect_stderr
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -12,7 +15,7 @@ from kahua_migration.browser_migration import CONTRACT_ID, MigrationRunner, Proj
 from kahua_migration.browser_navigation import DestinationNavigator, match_project, match_folder
 from kahua_migration.csv_config import merge_csv_config, validate_destination
 from kahua_migration.journal import Journal, JournalConflict, STAGES
-from kahua_migration.preflight import InputError, digest
+from kahua_migration.preflight import InputError, digest, main as preflight_main
 from kahua_migration.migration_cli import main as migrate_main
 import test_preflight as source_fixtures
 
@@ -169,6 +172,121 @@ class NavigationTests(unittest.TestCase):
             self.assertEqual(observed, populated)
             self.assertGreaterEqual(read.call_count, 8)
             walker.return_value.scan_to_end.assert_called_once()
+
+
+class MigrationInputTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture = source_fixtures.MigrationTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        f = self.fixture
+        f.config["projects"][0]["target"] = TARGET.copy()
+        f.write_inputs()
+        self.original_manifest = f.audit()
+        self.root = f.root
+        self.config_path = self.root / "settings" / "migration.json"
+        self.config_path.parent.mkdir()
+        self.config_path.write_text(json.dumps(f.config))
+        previous_cwd = Path.cwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, previous_cwd)
+
+    def move_inputs(self, source_root):
+        source_root.mkdir(parents=True)
+        self.fixture.project.rename(source_root / "source")
+        (self.root / "versions.csv").rename(source_root / "version_sets.csv")
+
+    def plan(self, *source_args):
+        with patch("playwright.sync_api.sync_playwright") as browser, \
+                patch("kahua_migration.migration_cli.resolve_ocr") as ocr:
+            result = migrate_main(["--config", str(self.config_path), "--journal", "never.sqlite",
+                                   "--out", "plan", *source_args])
+        browser.assert_not_called()
+        ocr.assert_not_called()
+        self.assertFalse((self.root / "never.sqlite").exists())
+        return result
+
+    def check_manifest(self, source_root):
+        manifest = json.loads((self.root / "plan/manifest.json").read_text())
+        self.assertEqual(manifest["source_root"], str(source_root.resolve()))
+        self.assertEqual(manifest["summary"]["errors"], 0, manifest["issues"])
+        # Relocating the parent must preserve upload identity, revisions and hashes.
+        self.assertEqual(manifest["files"], self.original_manifest["files"])
+        for record in manifest["files"]:
+            self.assertTrue((Path(manifest["source_root"]) / record["source_file"]).is_file())
+        return manifest
+
+    def test_default_drawings_parent_is_independent_of_config_location(self):
+        source_root = self.root / "drawings"
+        self.move_inputs(source_root)
+        self.assertEqual(self.plan(), 0)
+        self.check_manifest(source_root)
+
+    def test_new_parent_preserves_project_and_version_set_sequence(self):
+        source_root = self.root / "drawings"
+        self.move_inputs(source_root)
+        shutil.copytree(source_root / "source", source_root / "Project Two")
+        second = copy.deepcopy(self.fixture.config["projects"][0])
+        second.update(project_uid="p2", source_directory="Project Two")
+        second["target"].update(project_number="0002", project_name="Project Two")
+        self.fixture.config["projects"].append(second)
+        self.config_path.write_text(json.dumps(self.fixture.config))
+        versions = [dict(row, project_uid=uid, project_sequence=sequence)
+                    for row in reversed(self.fixture.versions)
+                    for uid, sequence in (("p1", "20"), ("p2", "3"))]
+        self.fixture.write_csv(source_root / "version_sets.csv", versions)
+        self.assertEqual(self.plan(), 0)
+        plan = json.loads((self.root / "plan/run-plan.json").read_text())
+        self.assertEqual([(p["project_uid"], p["project_sequence"]) for p in plan["projects"]],
+                         [("p2", 3), ("p1", 20)])
+        for project, directory in zip(plan["projects"], ("Project Two", "source")):
+            self.assertEqual([b["upload_sequence"] for b in project["batches"]], [1, 2, 3])
+            files = [record for batch in project["batches"] for record in batch["files"]]
+            self.assertEqual(len(files), 5)
+            for record in files:
+                self.assertEqual(Path(record["source_file"]).parts[0], directory)
+                self.assertTrue((source_root / record["source_file"]).is_file())
+
+    def test_parent_override_accepts_relative_and_absolute_paths_with_spaces(self):
+        source_root = self.root / "customer exports"
+        self.move_inputs(source_root)
+        for path in ("customer exports", str(source_root)):
+            with self.subTest(path=path):
+                self.assertEqual(self.plan("--source-root", path), 0)
+                self.check_manifest(source_root)
+
+    def test_explicit_csv_path_is_independent_of_parent_override(self):
+        source_root = self.root / "drawings"
+        self.move_inputs(source_root)
+        (source_root / "version_sets.csv").rename(self.root / "selected versions.csv")
+        (source_root / "version_sets.csv").write_text("unused CSV must not be read")
+        self.assertEqual(self.plan("--source-root", "drawings", "--version-sets", "selected versions.csv"), 0)
+        self.check_manifest(source_root)
+
+    def test_missing_or_invalid_parent_stops_before_browser_start(self):
+        (self.root / "not a directory").write_text("file")
+        for args in ([], ["--source-root", "missing", "--execute"], ["--source-root", "not a directory"]):
+            with self.subTest(args=args), redirect_stderr(io.StringIO()) as errors:
+                self.assertEqual(self.plan(*args), 1)
+                self.assertIn("Source root is not a directory", errors.getvalue())
+        self.assertFalse((self.root / "plan").exists())
+
+    def test_parent_override_keeps_project_paths_inside_source_root(self):
+        self.move_inputs(self.root / "drawings")
+        self.fixture.config["projects"][0]["source_directory"] = "../source"
+        self.config_path.write_text(json.dumps(self.fixture.config))
+        self.assertEqual(self.plan("--source-root", "drawings"), 2)
+        issues = json.loads((self.root / "plan/issues.json").read_text())
+        self.assertTrue(any(issue["code"] == "SOURCE_UNAVAILABLE" and
+                            "Path leaves the configured source root" in issue["message"] for issue in issues))
+
+    def test_standalone_audit_can_use_the_same_parent_override(self):
+        source_root = self.root / "drawings"
+        self.move_inputs(source_root)
+        result = preflight_main(["audit", "--version-sets", "drawings/version_sets.csv",
+                                 "--source-root", "drawings", "--config", str(self.config_path), "--out", "plan"])
+        self.assertEqual(result, 0)
+        self.check_manifest(source_root)
 
 
 class AutomaticRunnerTests(unittest.TestCase):

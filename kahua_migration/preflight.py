@@ -113,13 +113,19 @@ def atomic_json(path, data):
             os.unlink(name)
 
 
-def audit(version_path, config_path):
+def audit(version_path, config_path, *, source_root=None):
+    """Audit mapped inputs, optionally overriding the source root from the caller's cwd."""
     config_path = config_path.resolve()
     config = json.loads(config_path.read_text(encoding="utf-8"))
     if config.get("schema_version") != 1:
         raise InputError("Unsupported or missing configuration schema_version")
     base = config_path.parent
-    source_root = inside(base, config.get("source_root", "."))
+    if source_root is None:
+        source_root = inside(base, config.get("source_root", "."))
+    else:
+        source_root = Path(source_root).expanduser().resolve()
+        if not source_root.is_dir():
+            raise InputError(f"Source root is not a directory: {source_root}")
     versions = read_csv(version_path, VERSION_COLUMNS)
     if not versions:
         raise InputError("The version-set export is empty")
@@ -511,6 +517,8 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="command", required=True)
     audit_parser = sub.add_parser("audit", help="Validate the source and write a local manifest; no network calls")
     audit_parser.add_argument("--version-sets", type=Path, required=True)
+    audit_parser.add_argument("--source-root", type=Path,
+                              help="Override config source_root with an absolute or working-directory-relative path")
     audit_parser.add_argument("--config", type=Path, required=True)
     audit_parser.add_argument("--out", type=Path, required=True)
     compare_parser = sub.add_parser("reconcile", help="Compare a complete normalized target snapshot with a manifest")
@@ -520,7 +528,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "audit":
-            result = audit(args.version_sets, args.config)
+            result = audit(args.version_sets, args.config, source_root=args.source_root)
             atomic_json(args.out / "manifest.json", result)
             atomic_json(args.out / "issues.json", result["issues"])
             print(json.dumps(result["summary"], indent=2))

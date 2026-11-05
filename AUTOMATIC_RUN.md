@@ -83,15 +83,45 @@ the selected engine before launching Chrome.
 
 ### Source inputs
 
-For a new migration, copy `examples/automatic-queue` to a working directory
-(`cp -R examples/automatic-queue my-migration` on macOS, or
-`Copy-Item -Recurse .\examples\automatic-queue .\my-migration` in PowerShell).
-It contains synthetic
-CSV metadata and configuration only; supply the actual PDFs.
+For a new migration, copy the `drawings/` directory from
+`examples/automatic-queue` into the directory where you will invoke the command,
+and copy its `migration.json` as `migration.local.json`. The example contains
+synthetic CSV metadata and configuration only; supply the actual PDFs.
 Replace example project mappings, logs and folders with your actual values.
 For an existing migration, keep its unchanged inputs and existing journal.
 JSON path values can use forward slashes on Windows; literal backslashes in
 JSON must be doubled. Quote command-line paths that contain spaces.
+
+The default input parent is `drawings/` in the directory where you invoke the
+command. Put the shared `version_sets.csv` and all project directories directly
+under that parent:
+
+```text
+migration.local.json
+drawings/
+  version_sets.csv
+  Project A/
+    Project A_drawing_log.csv
+    Project A_current_set_log.csv
+    Drawings/
+      First Set/
+      Later Revision/
+      Current/
+  Project B/
+    Project B_drawing_log.csv
+    Project B_current_set_log.csv
+    Drawings/
+      First Set/
+      Current/
+```
+
+Set `source_directory` to the project directory name, such as `Project A`,
+without a `drawings/` prefix. The `drawing_log`, `current_log`, `version_folder`
+and `current_folder` mappings remain relative to that project directory. For
+project-prefixed log filenames, set `drawing_log` and `current_log` to their
+exact filenames in the CSV or per-project JSON mapping. The parent directory
+can be changed with `--source-root`; no project mapping edits are needed when
+only that parent moves.
 
 `version_sets.csv` retains the existing version-set columns and adds explicit
 project/destination columns. Repeat project fields consistently on every row
@@ -167,8 +197,7 @@ assume they do not yet exist.
 
 ```sh
 .venv/bin/python -m kahua_migration browser migrate \
-  --version-sets my-migration/version_sets.csv \
-  --config my-migration/migration.json \
+  --config migration.local.json \
   --journal state/my-migration.sqlite \
   --out output/my-plan
 ```
@@ -179,8 +208,7 @@ directory and the same journal:
 
 ```sh
 .venv/bin/python -m kahua_migration browser migrate \
-  --version-sets my-migration/version_sets.csv \
-  --config my-migration/migration.json \
+  --config migration.local.json \
   --journal state/my-migration.sqlite \
   --ocr-backend vision \
   --out output/my-run-01 --execute
@@ -196,8 +224,7 @@ Check the report (success requires the literal boolean `true`):
 
 ```powershell
 & .\.venv\Scripts\python.exe -m kahua_migration browser migrate `
-  --version-sets .\my-migration\version_sets.csv `
-  --config .\my-migration\migration.json `
+  --config .\migration.local.json `
   --journal .\state\my-migration.sqlite `
   --out .\output\my-plan
 ```
@@ -208,8 +235,7 @@ and review warnings before executing. In the same PowerShell session, with
 
 ```powershell
 & .\.venv\Scripts\python.exe -m kahua_migration browser migrate `
-  --version-sets .\my-migration\version_sets.csv `
-  --config .\my-migration\migration.json `
+  --config .\migration.local.json `
   --journal .\state\my-migration.sqlite `
   --ocr-backend tesseract --ocr-executable "$ocr" `
   --out .\output\my-run-01 --execute
@@ -224,6 +250,34 @@ and 1 means setup/execution stopped with an error. If setup stops before a
 `run-report.json` exists, inspect the terminal error and source audit reports.
 For either OS, also inspect each project's report and linked metadata and
 original-file integrity reports; a successful process start is not a pass.
+
+### Override the input parent
+
+To use a different input parent, pass its path on the command line:
+
+```sh
+.venv/bin/python -m kahua_migration browser migrate \
+  --source-root "/path/to/customer drawings" \
+  --config migration.local.json \
+  --journal state/my-migration.sqlite \
+  --out output/my-plan
+```
+
+On Windows, add `--source-root "D:\Migration\drawings"` to either PowerShell
+command above to select that parent instead.
+
+`--source-root` accepts an absolute path or a path relative to the working
+directory and overrides `source_root` in the JSON configuration. The command
+reads `<source-root>/version_sets.csv` unless you also supply `--version-sets`.
+An explicit `--version-sets` path is used as given, relative to the working
+directory when needed. For existing runs, supplying `--version-sets` without
+`--source-root` retains the configuration's original source-root behavior
+(relative to the JSON file). With neither option, the browser command uses
+`./drawings` for both the CSV and project folders. A missing parent or CSV stops
+the command before it opens a browser.
+
+The standalone `audit` command also accepts `--source-root`; it still requires
+an explicit `--version-sets` path.
 
 The worker checks for a usable signed-in session. If Kahua shows its login
 screen, sign in in the worker's Chrome window and acknowledge any environment
@@ -292,8 +346,7 @@ journal. Only the output directory changes. On macOS:
 
 ```sh
 .venv/bin/python -m kahua_migration browser migrate \
-  --version-sets my-migration/version_sets.csv \
-  --config my-migration/migration.json \
+  --config migration.local.json \
   --journal state/my-migration.sqlite --ocr-backend vision \
   --out output/my-run-02 --execute
 ```
@@ -302,16 +355,16 @@ In Windows PowerShell:
 
 ```powershell
 & .\.venv\Scripts\python.exe -m kahua_migration browser migrate `
-  --version-sets .\my-migration\version_sets.csv `
-  --config .\my-migration\migration.json `
+  --config .\migration.local.json `
   --journal .\state\my-migration.sqlite `
   --ocr-backend tesseract --ocr-executable "$ocr" `
   --out .\output\my-run-02 --execute
 ```
 
-Repeat the result check against `my-run-02`. Keep an in-progress migration on
-its original machine and source paths. Manifests include the resolved source
-root and records include platform-specific relative paths. Cross-platform
+If the original run used `--source-root` or `--version-sets`, include the same
+options when resuming. Repeat the result check against `my-run-02`. Keep an
+in-progress migration on its original machine and source paths. Manifests
+include the resolved source root and records include platform-specific relative paths. Cross-platform
 journal relocation is not implemented or validated.
 
 An explicitly recognized file-download service error allows one read-only

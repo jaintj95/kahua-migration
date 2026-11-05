@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "source_root": ".",
+  "source_root": "drawings",
   "revision_policy": "per_sheet_occurrence",
   "revision_start": 1,
   "project_defaults": {

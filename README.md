@@ -100,6 +100,14 @@ are in the run guide. Live Windows Kahua validation remains pending; synthetic
 tests do not establish tenant compatibility or unattended migration reliability.
 The Windows documents/photos and sync-flag scripts above are separate workflows.
 
+The automatic command defaults to `drawings/version_sets.csv`, with each
+project directory alongside that CSV under `drawings/`. Pass
+`--source-root "/path/to/drawings"` to change this parent for the CSV and all
+project folders. Paths are relative to the working directory unless absolute.
+Existing commands with an explicit `--version-sets` and no `--source-root`
+continue to use the configuration's source root. See the automatic run guide
+for the input layout and complete commands.
+
 Initial requirements and workflow notes are in [call_notes.md](call_notes.md).
 
 The previous manual version is preserved at `manual-pilot-v0.1.0`, with its instructions in
@@ -164,7 +172,8 @@ The core uses Python 3.10+ and the standard library.
 
 ```sh
 python3 -m kahua_migration audit \
-  --version-sets version_sets.csv \
+  --version-sets drawings/version_sets.csv \
+  --source-root drawings \
   --config migration.example.json \
   --out output/preflight
 
