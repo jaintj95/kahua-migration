@@ -333,10 +333,11 @@ generated screenshots with real OCR, and intercepted Chrome fixture pages.
 native Windows Python, Tesseract and Chrome on GitHub-hosted Windows.
 Hosted fixtures are separate from the user's Windows VM and live Kahua.
 
-Native Windows VM/display/layout calibration and an authorized live migration
-remain required. No Windows VM/devbox access or real migration is part of these
-tests. Existing supervised macOS live results in `README.md` are historical;
-they do not validate the new Windows backend or fresh unattended uploads.
+The user's Windows VM has also passed the fixture suite and a standalone
+plan-only command. Actual Kahua display/layout calibration and an authorized
+live Windows migration remain required. Existing supervised macOS live results
+in `README.md` are historical; they do not validate the new Windows backend or
+fresh unattended uploads.
 
 Local verification on November 5, 2026: the complete 162-test suite passed with
 Tesseract 5.5.4 on macOS. The same suite with the compiled Vision helper passed
@@ -351,8 +352,35 @@ also passed all 162 tests on November 5, 2026, using native Python 3.12 and
 Tesseract `v5.5.3.20260724`, including all eight Chrome fixtures and four real
 OCR image tests. This verifies installation, native subprocess/UTF-8 paths,
 binary PNG input, CSS coordinate scaling, engine checks and synthetic recovery
-on a GitHub runner. It does not use or validate the user's Windows VM, real
-tenant layout, sign-in/MFA or migration throughput.
+on a GitHub runner. It does not validate real tenant layout, sign-in/MFA or
+migration throughput.
+
+After adding `project_sequence`, all 171 tests passed on macOS with Tesseract
+and in the [updated hosted Windows run](https://github.com/jaintj95/kahua-migration/actions/runs/42035787165).
+The nine additional tests cover numeric project ordering, invalid/conflicting
+sequence values, filtering, legacy CSV compatibility, stable journal operation
+identities, sequential execution, and continuing after a recoverable project
+failure.
+
+Native Windows VM verification on November 5, 2026 used an isolated copy under
+`C:\Users\MigrationEngineer\Documents\KahuaDrawings-20261105\code`, based on
+commit `05f8c8c` plus the privilege-aware symlink test correction. The full suite
+reported `Ran 171 tests` and `OK (skipped=1)`: 170 passed, with only the symlink
+fixture skipped because this account lacks Windows symbolic-link creation
+privilege (error 1314). That fixture passed on macOS and hosted Windows; the
+production source-path checks are unchanged. All OCR, Chrome, queue-ordering,
+revision and journal fixtures ran on the VM. Logs remain beside `code` in
+`tests-v2-stdout.log` and `tests-v2-stderr.log`.
+
+The VM's standalone plan-only command used Python `-S` (site packages disabled)
+and a nonexistent OCR executable. It exited 0 with both synthetic projects
+ready, project sequences `3, 20`, and version-set sequences `1, 2, 3` in each
+project. No browser profile or journal was created. A second plan containing
+duplicate `upload_sequence` values exited 2 and marked the affected project
+not ready with `DUPLICATE_VERSION_KEY`, `SEQUENCE_GAP` and
+`DATE_ORDER_CONFLICT`. Plans and issues remain under `plan-only` and
+`plan-duplicate` beside `code`. Neither check connected to Kahua or uploaded
+drawings.
 
 To reproduce the local checks, first install `.[browser,ocr]` even on macOS
 (Pillow renders synthetic test pixels). Compile Vision as above, then:

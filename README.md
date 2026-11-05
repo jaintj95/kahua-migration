@@ -57,6 +57,9 @@ remain local and are excluded from source control.
 For the CSV-driven project queue, start with [AUTOMATIC_RUN.md](AUTOMATIC_RUN.md).
 Run `browser migrate` to read the CSV, find or create the named projects and
 folders, and process all version sets without selecting destinations manually.
+Projects run in numeric `project_sequence` order; each project's version sets
+finish in `upload_sequence` order before the next project starts. Both orders
+appear in the plan for review.
 Sign-in and MFA are manual when Kahua requires them.
 
 The drawings browser command now has a shared offline OCR adapter: the existing
@@ -71,11 +74,15 @@ The portability tests cover adapter contracts, UTF-8/paths with spaces,
 coordinate scaling, CLI behavior, intercepted browser fixtures, ordered batches,
 project isolation and uncertain-Save reconciliation. A separate hosted Windows
 fixture job is defined in `.github/workflows/drawings-portability.yml`.
-[All 162 hosted Windows fixture tests passed](https://github.com/jaintj95/kahua-migration/actions/runs/42032712135)
-on November 5, 2026, with native Python, Tesseract and Chrome.
-Windows VM and live Kahua validation remain pending; synthetic tests do not
-establish tenant compatibility or unattended migration reliability. The Windows
-documents/photos and sync-flag scripts above are separate workflows.
+[All 171 hosted Windows fixture tests passed](https://github.com/jaintj95/kahua-migration/actions/runs/42035787165)
+on November 5, 2026, with native Python, Tesseract and Chrome; all 171 also passed
+on macOS with Tesseract. On the user's Windows VM, 170 passed and one symlink
+fixture skipped because the account lacks symbolic-link creation privilege.
+The VM also passed an engine-free, two-project plan-only check and rejected a
+duplicate version-set order. [Validation details and evidence locations](AUTOMATIC_RUN.md#portability-validation-scope)
+are in the run guide. Live Windows Kahua validation remains pending; synthetic
+tests do not establish tenant compatibility or unattended migration reliability.
+The Windows documents/photos and sync-flag scripts above are separate workflows.
 
 Initial requirements and workflow notes are in [call_notes.md](call_notes.md).
 
