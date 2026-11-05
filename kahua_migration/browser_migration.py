@@ -12,7 +12,7 @@ from .browser_readback import compare_readback
 from .browser_upload import BatchAttachment, UploadGrid, validate_attachment_sources
 from .csv_config import validate_destination
 from .journal import STAGES, now
-from .preflight import InputError, atomic_json, digest
+from .preflight import InputError, atomic_json, digest, exact_text
 from .runner import select_projects
 
 
@@ -50,8 +50,17 @@ def verify_export(exported, records):
 
 
 class ProjectRunner(PilotRunner):
-    def __init__(self, page, manifest, journal, output, ocr_executable, project_uid):
+    def __init__(self, page, manifest, journal, output, ocr_executable, project_uid, *, resolved_target=None):
         self.project, self.records, self.batches = project_scope(manifest, project_uid)
+        self.requested_target = self.project["target"]
+        if self.requested_target.get("project_lookup") == "unique_name":
+            if not isinstance(resolved_target, dict):
+                raise BrowserError("Resolve the exact Kahua project before starting uploads")
+            exact_text(resolved_target.get("project_number"), "Resolved Kahua project number")
+            if any(resolved_target.get(k) != value for k, value in self.requested_target.items()
+                   if k != "project_number"):
+                raise BrowserError("Resolved destination differs from the audited project request")
+            self.project = {**self.project, "target": dict(resolved_target)}
         self.page, self.manifest, self.journal = page, manifest, journal
         self.output = Path(output).resolve()
         self.output.mkdir(parents=True, exist_ok=True)
@@ -189,7 +198,7 @@ class ProjectRunner(PilotRunner):
         try:
             self.inspector._guard()
             for record in self.records:
-                self.journal.register(record["operation_key"], record["fingerprint"], {**self.project["target"], "contract_id": CONTRACT_ID})
+                self.journal.register(record["operation_key"], record["fingerprint"], {**self.requested_target, "contract_id": CONTRACT_ID})
             for batch in self.batches:
                 records = [r for r in self.records if r["version_set_uid"] == batch["version_set_uid"]]
                 prefix = [r for r in self.records if r["upload_sequence"] <= batch["upload_sequence"]]
@@ -273,9 +282,11 @@ class MigrationRunner:
                 navigator.allow_upload_error_dismissal = recover_previous_upload_errors
                 navigation_started = True
                 self.session_recovery.checkpoint(self.page, project["target"]["environment"])
-                navigator.ensure(project["target"])
+                navigation = navigator.ensure(project["target"])
+                resolved = ({"resolved_target": navigation["target"]}
+                            if project["target"].get("project_lookup") == "unique_name" else {})
                 entry = self.project_factory(self.page, self.manifest, self.journal, output / "batches", self.ocr,
-                                             project["project_uid"]).run()
+                                             project["project_uid"], **resolved).run()
             except AuthenticationRequired as exc:
                 entry.update(error=str(exc), requires_sign_in=True, status="paused")
                 result["projects"].append(entry)

@@ -152,40 +152,43 @@ drawings/
       Current/
 ```
 
-Set `source_directory` to the project directory name, such as `Project A`,
-without a `drawings/` prefix. The `drawing_log`, `current_log`, `version_folder`
-and `current_folder` mappings remain relative to that project directory. For
-project-prefixed log filenames, set `drawing_log` and `current_log` to their
-exact filenames in the CSV or per-project JSON mapping. The parent directory
-can be changed with `--source-root`; no project mapping edits are needed when
-only that parent moves.
+Use the export's original nine-column `version_sets.csv` unchanged. No extra
+source or destination mapping columns are required. The loader derives:
 
-For a new queue using the generated settings, the CSV must supply the exact
-`source_directory`, `version_folder`, `target_project_number` and
-`target_project_name` mappings. These identify the actual source files and
-Kahua destinations; the first-run setup does not invent them. Add per-project
-`drawing_log` and `current_log` values when filenames differ from the shared
-defaults. Existing files can keep their names.
+- Project directory: `<source-root>/<project_clean_name>`.
+- Logs: `<project_clean_name>_drawing_log.csv` and
+  `<project_clean_name>_current_set_log.csv` inside that project directory.
+  A unique log with a different project-name prefix also works (ZIP exports
+  can replace punctuation differently), as do unprefixed filenames. Multiple
+  logs with the matching suffix are reported as ambiguous. Discovery stays
+  inside the selected project directory.
+- Historical PDFs: `Drawings/<version_name>/<Sheet Name>.pdf`.
+- Current comparison files: `Drawings/Current/<Sheet Name>.pdf`.
+- Kahua destination: the unique exact `project_clean_name` in the configured
+  domain. Execution reads its actual project number from Project Finder and
+  records that identity in the journal. `project_sequence` is only queue order.
 
-`version_sets.csv` retains the existing version-set columns and adds explicit
-project/destination columns. Repeat project fields consistently on every row
-for that project. Preserve leading zeros in project numbers.
+The parent directory can be changed with `--source-root`. Project and version
+names must identify direct folders; the loader does not guess alternative
+spellings or silently select one of several matching projects. Repeat project
+fields consistently on every version-set row for that project.
 
 | Column | Meaning |
 |---|---|
 | `project_uid` | Stable source project identity |
 | `project_name` | Source project name |
+| `project_clean_name` | Exact exported folder name and default Kahua project name |
 | `project_sequence` | Project queue order: one positive integer repeated on every row for that project |
-| `project_kahua_entity_id` | Retained export field; `0` does not identify a browser destination |
+| `project_kahua_entity_id` | Export metadata; may be blank or `0`. A nonzero ID prevents creating a replacement when its exact name is missing. The browser lookup does not independently verify this ID. |
 | `version_set_uid` | Stable version-set identity |
 | `version_name` | Exact batch name |
 | `published_at` | Batch date, `YYYY-MM-DD` |
 | `upload_sequence` | Version-set order within each project, covering 1 through N |
-| `source_directory` | Project source directory, relative to `source_root` |
-| `version_folder` | This batch's PDF directory, relative to its source directory |
-| `target_project_number` | Exact destination number |
-| `target_project_name` | Exact destination name |
-| `target_folder_path` | Optional override of the shared destination folder (`Sheets` by default) |
+
+Older explicit CSV and JSON mappings remain supported as optional overrides,
+including `source_directory`, `version_folder`, `drawing_log`, `current_log`,
+`target_project_number`, `target_project_name`, and `target_folder_path`.
+Explicit number/name bindings keep their previous lookup and journal scope.
 
 ### Multiple projects in one queue
 
@@ -204,7 +207,7 @@ project-a,2,a-revision,2
 This is an ordering illustration; the real CSV also needs the other columns
 listed above. CSV row order and project names do not override either sequence.
 Every project must have a unique positive `project_sequence`; repeat it on all
-that project's rows. Gaps between project numbers are allowed. Blank, invalid,
+that project's rows. Gaps between project sequence values are allowed. Blank, invalid,
 conflicting or duplicate project sequence values stop the audit before Chrome
 opens. `--project-uid` filters the queue without changing its configured order.
 Check the project array and sequence values in `run-plan.json` before execution.
@@ -220,13 +223,22 @@ CSV fields such as
 also work; a conflicting explicit CSV/JSON mapping stops the audit.
 
 Set each creation policy to `find_or_create` or `existing_only`. Creation
-requires an explicit project record type. This contract creates blank projects
-at the configured domain root, and Controlled folders. Project templates and
-nested project creation are not supported. Existing nested projects can be
-found by their exact number and name. Ambiguous exact matches stop the project.
+uses the configured project record type (`Project` by default). This contract
+creates blank projects at the configured domain root, and Controlled folders.
+When the export has no project number, a new project preserves the number
+supplied by Kahua. If Kahua leaves it blank, the worker stops before Save and
+asks for that project to be created in Kahua or automatic numbering to be
+configured. Project templates and nested project creation are not supported.
+Existing nested projects can be found through Project Finder. Ambiguous exact
+names stop the project. A changed number on resume also stops before uploads.
 Use one Kahua environment and domain per invocation.
 
-The drawing log still supplies the exact sheet number, title and revision date.
+The drawing log supplies the exact sheet number, title and revision date.
+For browser migration, a blank or whitespace-only `Description` uses the sheet
+number as the Kahua title. Each fallback is a `TITLE_FROM_SHEET_NUMBER` warning;
+the manifest retains `source_title` and `title_source: "sheet_number"` for those
+records. Existing nonblank titles are unchanged. The same rule applies when
+comparing the current-set log.
 Revisions increase per sheet occurrence, starting at 1. `upload_sequence` never
 becomes the revision number. `Current` remains a comparison set and is never
 uploaded. Every input PDF is hashed before execution.
@@ -244,7 +256,12 @@ assume they do not yet exist.
 .venv/bin/python -m kahua_migration browser migrate
 ```
 
-Review `manifest.json`, `issues.json`, and `run-plan.json` in the printed report
+The terminal shows READY/BLOCKED for each selected project, its error and
+warning counts, issue codes, affected versions/sheets and relevant fix guidance.
+It shows up to 20 issues per project; `audit-summary.txt` contains the complete
+human-readable audit. `issues.json` contains all structured issues.
+
+Review `audit-summary.txt`, `manifest.json`, `issues.json`, and `run-plan.json` in the printed report
 directory. The plan does not open a browser or change Kahua. Add `--execute`
 to run, using a new output
 directory and the same journal. The examples below give `--out` explicitly so
@@ -272,7 +289,7 @@ Adding `--source-root` changes the input directory; it does not start execution.
 & .\.venv\Scripts\python.exe -m kahua_migration browser migrate
 ```
 
-Review `manifest.json`, `issues.json` and `run-plan.json`. Resolve audit errors
+Review `audit-summary.txt`, `manifest.json`, `issues.json` and `run-plan.json`. Resolve audit errors
 and review warnings before executing. **`--execute` opens Chrome and starts
 the migration after sign-in.** In the same PowerShell session, with
 `$ocr` set as above:
@@ -521,3 +538,20 @@ The browser tests create temporary profiles, never reuse the migration profile,
 and never call Kahua. Running without the two opt-in variables skips real
 OCR/Chrome integration tests. On macOS, Tesseract can be checked separately with
 `brew install tesseract` and `KAHUA_TEST_OCR_BACKEND=tesseract` in the shell command.
+
+### November 6 export-schema validation
+
+The nine-column export, unique log discovery, blank-title fallback, detailed
+audit reporting and project identity/journal regressions passed 17 tests on
+the Windows VM. The local regression run passed 198 tests with 12 optional
+Chrome/OCR tests skipped. The unchanged supplied two-project, six-version CSV
+also passed a local audit using synthetic matching logs and PDFs.
+
+The VM's actual one-project export passed a plan-only run with 385 historical
+PDFs, zero errors, 308 `TITLE_FROM_SHEET_NUMBER` warnings and 269
+`CURRENT_BYTES_DIFFER` warnings. The tested modules were installed in the
+existing worker directory after backup and hash verification. Its own command
+then exited 0, with reports under
+`output/drawings/export-fix-validation-20261106/`. Source CSV and settings
+hashes were unchanged. This verifies source planning on Windows; the new
+name-based browser lookup and a live upload were not exercised by this check.

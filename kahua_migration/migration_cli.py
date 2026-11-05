@@ -9,6 +9,7 @@ import time
 from uuid import uuid4
 
 from .browser import BrowserError
+from .audit_report import write_audit_summary
 from .browser_auth import needs_sign_in
 from .browser_migration import MigrationRunner, project_scope
 from .browser_setup import ensure_config
@@ -78,6 +79,7 @@ def main(argv=None):
         manifest = audit(version_sets, args.config, source_root=source_root)
         atomic_json(args.out / "manifest.json", manifest)
         atomic_json(args.out / "issues.json", manifest["issues"])
+        audit_summary = write_audit_summary(manifest, args.out, args.project_uid)
         plan = build_plan(manifest, args.project_uid)
         atomic_json(args.out / "run-plan.json", plan)
         projects = select_projects(manifest, args.project_uid)
@@ -92,7 +94,8 @@ def main(argv=None):
                   "To open the browser and start uploading, rerun the same command with --execute.")
             return 0 if len(runnable) == len(projects) else 2
         if not runnable:
-            raise InputError("No selected project passed the source audit")
+            raise InputError(f"No selected project passed the source audit. Fix the errors listed above, "
+                             f"then rerun. Full details: {audit_summary}. No browser opened.")
         environments = {p["target"]["environment"].rstrip("/") for p in runnable}
         domains = {p["target"]["domain_name"] for p in runnable}
         if len(environments) != 1 or len(domains) != 1:

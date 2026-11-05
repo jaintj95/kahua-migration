@@ -116,6 +116,15 @@ Existing commands with an explicit `--version-sets` and no `--source-root`
 continue to use the configuration's source root. See the automatic run guide
 for the input layout and complete commands.
 
+The original nine-column export works as-is: `project_clean_name` selects the
+project folder, its prefixed logs and the exact Kahua project name;
+`version_name` selects `Drawings/<version_name>`. The browser reads the actual
+Kahua project number from the unique Project Finder match and pins it in the
+journal. No extra mapping columns are required. Each audit prints project-level
+errors and fix guidance, with full details in `audit-summary.txt` and
+`issues.json`. Blank drawing descriptions use the sheet number as the title,
+with a warning and source provenance. Older explicit mappings remain supported.
+
 Initial requirements and workflow notes are in [call_notes.md](call_notes.md).
 
 The previous manual version is preserved at `manual-pilot-v0.1.0`, with its instructions in
