@@ -9,10 +9,15 @@ install the other.
 | Workflow | Source and entry point | Runtime | Guide |
 | --- | --- | --- | --- |
 | Drawings and revisions | `kahua_migration/`; `python -m kahua_migration browser migrate` | macOS or native Windows; Python 3.10+, Playwright and offline OCR | [AUTOMATIC_RUN.md](AUTOMATIC_RUN.md) |
-| Project sync flags only | `scripts/windows-local-sync/`; `Invoke-KahuaSyncFlags.ps1` | Windows PowerShell 5.1 and Kahua for Windows | [SYNC_FLAGS.md](SYNC_FLAGS.md) |
+| Project sync flags only | `Start-SyncFlags.cmd` (guided); `scripts/windows-local-sync/Invoke-KahuaSyncFlags.ps1` (commands) | Windows PowerShell 5.1 and Kahua for Windows | [SYNC_FLAGS.md](SYNC_FLAGS.md) |
 | Documents and photos | `scripts/windows-local-sync/`; `Invoke-KahuaSyncBatch.ps1` | Windows PowerShell 5.1 and Kahua for Windows | [LOCAL_FILE_SYNC.md](LOCAL_FILE_SYNC.md) |
 
-For **Doe's simpler flag workflow**, use [SYNC_FLAGS.md](SYNC_FLAGS.md). It reads
+For **Doe's simpler flag workflow**, double-click `Start-SyncFlags.cmd` and
+follow the prompts in [SYNC_FLAGS.md](SYNC_FLAGS.md#guided-launcher). The launcher
+checks all projects before offering APPLY. It manages batch history automatically;
+retries use the same history and changed inputs get a separate batch. `StateRoot`
+remains available for existing manual batches. Bounded recovery retries eligible
+reads and reconciles a saved setting without repeating Save. It reads
 exact project names, sets each project's own Folders switch to the requested
 boolean, and verifies the saved setting. Doe places the files and Kahua handles
 the transfers. Five live project reads passed, and Seattle completed a saved
@@ -25,7 +30,9 @@ For production, use the [production commands and resume instructions](SYNC_FLAGS
 `Environment = 'PRODUCTION'` is required even without a visible client label;
 the runner verifies the registered production package. The guide distinguishes
 new batches from the VM's existing state, explains state-binding errors and
-same-name sync conflicts, and records the 154 passing Windows fixture checks.
+same-name sync conflicts, and records the 198 passing Windows fixture checks.
+The new guided launcher and bounded recovery have passed simulated tests on
+Windows PowerShell 5.1; live Kahua validation and VM deployment remain pending.
 The latest live production Check is blocked by Kahua's existing sync-name
 conflict; production Enable has not been validated.
 
@@ -42,8 +49,7 @@ Windows commands run from the repository root. Plan the sync-flag workflow:
 ```powershell
 .\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1 `
   -CsvPath C:\Migration\sameProjectsEnableSync.csv `
-  -Environment DEVPRODUCTION -Action Enable -Mode Plan `
-  -StateRoot C:\Migration\runs\enable-project-sync
+  -Environment DEVPRODUCTION -Action Enable -Mode Plan
 ```
 
 Follow [SYNC_FLAGS.md](SYNC_FLAGS.md) for Check, Enable, Disable, and per-row

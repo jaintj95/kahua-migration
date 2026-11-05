@@ -1,7 +1,8 @@
 # Enable or disable sync for a CSV of Kahua projects
 
-Use `scripts/windows-local-sync/Invoke-KahuaSyncFlags.ps1` for Doe's simpler
-workflow. It searches for each exact `project_name`, opens that project, sets
+Double-click **`Start-SyncFlags.cmd`** in the repository folder for the guided
+workflow, or use `scripts/windows-local-sync/Invoke-KahuaSyncFlags.ps1` from
+PowerShell. It searches for each exact `project_name`, opens that project, sets
 its **Local Files > Folders** switch, saves when needed, then closes and reopens
 settings to verify the saved value.
 
@@ -41,6 +42,9 @@ it is still selected for sync: Kahua can propagate local deletions to the server
   while the account is paused.
 - Keep all four runtime files together: `Invoke-KahuaSyncFlags.ps1`,
   `KahuaSyncFlags.psm1`, `KahuaSyncFlagDesktop.psm1`, and `KahuaDesktop.psm1`.
+  The guided launcher also uses `Start-KahuaSyncFlags.ps1` in that directory
+  and `Start-SyncFlags.cmd` at the repository root. Keep the repository's folder
+  structure intact when downloading an update.
   No Python, Playwright, ZIP, project UID, or source-file manifest is needed.
   After updating these files, open a fresh PowerShell session before running
   them so a previously imported helper cannot remain cached in memory.
@@ -49,8 +53,9 @@ it is still selected for sync: Kahua can propagate local deletions to the server
 
 **Before using Doe's five-project test CSV:** change `222 - Bellevue Park` to
 Kahua's exact name, `221 - Bellevue Park`, in a reviewed copy. The original
-file was preserved during testing. Use a new state directory for the corrected
-input if the original CSV was already planned or checked.
+file was preserved during testing. Automatic history gives corrected inputs a
+separate batch. If supplying an explicit `-StateRoot`, use a new state directory
+for corrected inputs and retain the original one.
 
 Doe's supplied format works unchanged with `-Action Enable` or `-Action Disable`:
 
@@ -82,7 +87,76 @@ domains, and unsupported Windows directory names are rejected before any
 desktop action. A duplicate exact name in Kahua also stops the run; the script
 does not guess based on folder location or a placeholder UID.
 
-## Run
+## Guided launcher
+
+1. Sign in to the intended Kahua Windows client and prepare the desktop above.
+2. Double-click `Start-SyncFlags.cmd` in the downloaded repository folder.
+3. Enter the CSV path, environment, and `Enable`, `Disable`, or `FromCsv`.
+   The environment prompt defaults to `PRODUCTION`. For a names-only CSV, enter
+   the exact domain already selected in Kahua; this is checked before any change.
+4. The launcher runs Plan and checks every project, then shows the requested
+   settings for review. After successful checks, type **`APPLY`** to apply the displayed
+   settings, or press Enter to finish without changing switches.
+5. Read the final result. `flags-verified` confirms settings only; check Kahua
+   separately to establish that files finished transferring.
+
+The same launcher works for subsequent batches and retries. It manages history
+automatically; you do not need to invent timestamps or supply `StateRoot`.
+After an interruption, resolve any reported application issue and start it
+again with the same inputs. It checks the actual switches again before writing.
+The command window stays open so you can read errors and report paths.
+
+You can also start the guided flow from PowerShell:
+
+```powershell
+.\scripts\windows-local-sync\Start-KahuaSyncFlags.ps1
+```
+
+Or prefill the answers:
+
+```powershell
+.\scripts\windows-local-sync\Start-KahuaSyncFlags.ps1 `
+  -CsvPath "$env:USERPROFILE\Downloads\sameProjectsEnableSync.csv" `
+  -Environment PRODUCTION -Action Enable
+```
+
+If Windows blocks downloaded scripts, use your organization's approved script
+execution policy. The launcher does not change that policy. It starts a fresh
+Windows PowerShell process when launched through the `.cmd` file.
+
+## Automatic history and retries
+
+`StateRoot` is **optional**. By default, each batch's history lives under
+`%LOCALAPPDATA%\KahuaMigration\SyncFlags\batch-<id>`. The runner prints the exact
+folder and stores it in `result.json`. It derives the batch ID from normalized
+project rows, requested switch values, environment, and domain inputs.
+
+| What changes? | What the script does |
+| --- | --- |
+| Plan, Check, Execute, or retry with the same inputs | Reuses the batch history; creates a new attempt log/report |
+| Add/remove/reorder projects, change environment/domain, or reverse the requested switches | Selects a different batch folder automatically; keeps earlier history |
+| Rename/move the CSV, change line endings, or change ignored `project_uid` values | Reuses history when the normalized requests are identical |
+| A switch already has the requested value | Reopens settings to verify it; does not toggle or Save again |
+| The CSV changes while the launcher waits for APPLY | Stops before applying the changed inputs; start again to review the new batch |
+
+For names-only CSVs, the launcher asks for the expected domain. In direct
+commands, supply `-Domain 'Exact domain'` to distinguish automatic histories
+by domain. If you omit it, the first live read binds the selected domain;
+later runs in a different domain stop. The script never guesses which domain
+you intended or silently discards that binding.
+
+Advanced options:
+
+- `-HistoryRoot C:\Migration\flag-history` relocates automatically managed
+  batches. Keep using the same location on subsequent runs.
+- `-StateRoot C:\Migration\runs\existing-batch` resumes a previously chosen
+  folder, including legacy batches. Its inputs must still match. Existing
+  manual folders are not automatically searched or moved into the new history.
+- Use either option, or neither; do not combine them. Keep history outside
+  every Kahua sync directory. Never delete or edit `binding.json` to bypass an
+  input mismatch, and never delete history to force a retry.
+
+## Run from PowerShell
 
 Commands below run from the repository root. `Environment` is mandatory and
 cannot be blank. It declares the intended environment and binds the saved run
@@ -99,8 +173,7 @@ Plan the supplied CSV without touching Kahua:
 ```powershell
 .\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1 `
   -CsvPath C:\Migration\sameProjectsEnableSync.csv `
-  -Environment DEVPRODUCTION -Action Enable -Mode Plan `
-  -StateRoot C:\Migration\runs\enable-20261104
+  -Environment DEVPRODUCTION -Action Enable -Mode Plan
 ```
 
 Search all projects and read their current flags without changing them:
@@ -108,8 +181,7 @@ Search all projects and read their current flags without changing them:
 ```powershell
 .\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1 `
   -CsvPath C:\Migration\sameProjectsEnableSync.csv `
-  -Environment DEVPRODUCTION -Action Enable -Mode Check `
-  -StateRoot C:\Migration\runs\enable-20261104
+  -Environment DEVPRODUCTION -Action Enable -Mode Check
 ```
 
 After Check succeeds, enable:
@@ -117,18 +189,16 @@ After Check succeeds, enable:
 ```powershell
 .\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1 `
   -CsvPath C:\Migration\sameProjectsEnableSync.csv `
-  -Environment DEVPRODUCTION -Action Enable -Mode Execute `
-  -StateRoot C:\Migration\runs\enable-20261104
+  -Environment DEVPRODUCTION -Action Enable -Mode Execute
 ```
 
 Once the operator has verified that Kahua finished syncing, disable using the
-same CSV and a **new state directory** for the opposite action:
+same CSV. Automatic history chooses a separate batch for the opposite action:
 
 ```powershell
 .\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1 `
   -CsvPath C:\Migration\sameProjectsEnableSync.csv `
-  -Environment DEVPRODUCTION -Action Disable -Mode Execute `
-  -StateRoot C:\Migration\runs\disable-20261104
+  -Environment DEVPRODUCTION -Action Disable -Mode Execute
 ```
 
 For a `sync_enabled` CSV, use `-Action FromCsv`. Plan is the default mode when
@@ -136,87 +206,47 @@ For a `sync_enabled` CSV, use `-Action FromCsv`. Plan is the default mode when
 
 ### Production commands
 
-Use the production-aware adapter introduced in commit `37317c5` or later.
-That fix is already installed in the supervised VM's repository. An older
-copy can still reject production because it expects a visible environment
-label. Keep `Environment = 'PRODUCTION'`, even when the client shows no label;
-do not replace it with a blank string or the launch URL. Sign in to the
-production Windows client manually before Check.
+Use the current repository version containing `Start-SyncFlags.cmd` and the
+production-aware adapter. Keep `Environment = 'PRODUCTION'`, even when the
+client shows no environment label. Sign in to the production client manually.
 
-For a **new production batch**, run this setup once. Retain the resulting state
-directory for Plan, Check, Execute, and retries with unchanged inputs:
+For new batches and all retries started with automatic history:
 
 ```powershell
 Set-Location -LiteralPath "$env:USERPROFILE\Desktop\Projects\kahua-migration"
-$runner = '.\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1'
-$kahuaRun = @{
-    CsvPath = "$env:USERPROFILE\Downloads\sameProjectsEnableSync.csv"
-    Environment = 'PRODUCTION'
-    Action = 'Enable'
-    StateRoot = Join-Path $env:USERPROFILE (
-        'Documents\KahuaRuns\production-enable-' + (Get-Date -Format yyyyMMdd-HHmmss)
-    )
-}
+.\scripts\windows-local-sync\Start-KahuaSyncFlags.ps1 `
+    -CsvPath "$env:USERPROFILE\Downloads\sameProjectsEnableSync.csv" `
+    -Environment PRODUCTION -Action Enable
 ```
 
-For the **existing production batch on the supervised VM**, use this setup
-instead. It restores the saved folder after reopening PowerShell; it must be
-used only with that batch's unchanged CSV, domain, environment, and action:
+Run the same command again after an interruption, or after updating the CSV
+for another batch. The launcher chooses the history and checks projects before
+offering APPLY. You do not need to edit a state-folder name.
+
+**Resuming an older batch with a manually chosen folder:** pass its existing
+`-StateRoot`. This example belongs to the original **one-project** supervised
+production batch. It is suitable only for that batch's unchanged inputs:
 
 ```powershell
-Set-Location -LiteralPath "$env:USERPROFILE\Desktop\Projects\kahua-migration"
-$runner = '.\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1'
-$kahuaRun = @{
-    CsvPath = "$env:USERPROFILE\Downloads\sameProjectsEnableSync.csv"
-    Environment = 'PRODUCTION'
-    Action = 'Enable'
-    StateRoot = "$env:USERPROFILE\Documents\KahuaRuns\production-enable-20261105-204341"
-}
+.\scripts\windows-local-sync\Start-KahuaSyncFlags.ps1 `
+    -CsvPath "$env:USERPROFILE\Downloads\sameProjectsEnableSync.csv" `
+    -Environment PRODUCTION -Action Enable `
+    -StateRoot "$env:USERPROFILE\Documents\KahuaRuns\production-enable-20261105-204341"
 ```
 
-With either setup, run Plan and Check. Each invocation starts a fresh Windows
-PowerShell process so cached modules cannot hide a deployed update:
+The later CSV containing an additional `Unit 4923` is a different batch. Use
+automatic history for that changed list and preserve the older folder. The
+same rule applies to any added/removed projects or changed switch values.
 
-```powershell
-powershell.exe -NoProfile -File $runner `
-    -CsvPath $kahuaRun.CsvPath -Environment $kahuaRun.Environment `
-    -Action $kahuaRun.Action -StateRoot $kahuaRun.StateRoot -Mode Plan
-if ($LASTEXITCODE -ne 0) { throw 'Plan failed. Resolve the reported error before continuing.' }
-
-powershell.exe -NoProfile -File $runner `
-    -CsvPath $kahuaRun.CsvPath -Environment $kahuaRun.Environment `
-    -Action $kahuaRun.Action -StateRoot $kahuaRun.StateRoot -Mode Check
-if ($LASTEXITCODE -ne 0) { throw 'Check failed. Do not run Execute; resolve the reported error first.' }
-```
-
-After Check exits with code 0 and its report has `status: checked`, enable:
-
-```powershell
-powershell.exe -NoProfile -File $runner `
-    -CsvPath $kahuaRun.CsvPath -Environment $kahuaRun.Environment `
-    -Action $kahuaRun.Action -StateRoot $kahuaRun.StateRoot -Mode Execute
-if ($LASTEXITCODE -ne 0) { throw 'Execute failed. Preserve this state and inspect the attempt report before retrying.' }
-```
-
-The last supervised production Check remains blocked by Kahua's **Unable to
+The latest supervised production Check remains blocked by Kahua's **Unable to
 sync / project of the same name already synced** warning. Resolve the existing
 sync mapping conflict with the Kahua administrator, then close the dialog and
-rerun Check. Clearing the message alone does not resolve the conflict. Do not
-use account Reset or delete/rename existing synced folders to bypass it.
-
-Assign a new batch's timestamped `StateRoot` once and retain its value; do not
-generate a new timestamp on each retry. Never reuse the previous
-`enable-batch-001` DEVPRODUCTION state for this production batch. A state-directory
-mismatch means that environment, project list, domain, or desired switch values
-differ from its saved binding. Preserve that directory for recovery and choose
-a new one for the changed batch. Do not delete or edit `binding.json` to bypass
-the check. Plan validates inputs and state only; it does not prove desktop or
-production compatibility.
+rerun. Clearing the message alone does not resolve the conflict. Automatic
+history and recovery do not repair Kahua's mapping or prove file transfers.
 
 Read the report path printed by each invocation. Check success is `checked`;
 Execute success is `flags-verified`, with reopened readbacks in its project
-receipts. Neither status establishes that file transfers finished. `failed`
-or an `uncertain` row requires recovery, not another blind toggle or Save.
+receipts. `failed` or an `uncertain` row requires inspecting the reported issue.
 Keep all attempts and their `progress.log` files.
 
 ## Results and recovery
@@ -268,12 +298,46 @@ and reopens settings to read the saved value. A temporarily disabled Folders
 control during Save is treated as pending, never as a completed save. An
 Unsaved Changes Alert stops the run and remains open for inspection.
 
-On a failure, the queue stops. An error during Save or readback marks that row
+### Bounded recovery
+
+The default `-RecoveryAttempts 2` permits up to two additional attempts per
+read or Save-reconciliation step for recognized temporary UI failures.
+`-RecoveryAttempts 0` disables these
+additional attempts; values from 0 through 3 are accepted by both entry points.
+Existing waits and short read polling still apply. The runner does not restart
+Kahua or sign in automatically.
+
+Recovery retries fresh, read-only Local Files snapshots after expired UI
+elements or explicitly recognized read timeouts. It also covers the
+**project-open read after selecting a search result**: an
+`ElementNotAvailableException`, including one wrapped by a `FindAll` call,
+causes a fresh root, exact project header, and picker-closure read. The project
+click is sent once. The header must be enabled, the picker must be closed, and
+the environment/domain must match before continuing. One 45-second wait budget
+covers those observations and all retries; recovery does not restart the clock.
+An in-progress native UI call cannot be interrupted by this polling deadline.
+Earlier Home/search navigation is not automatically replayed if it fails.
+
+After a transient Save/wait/
+readback failure, it can recheck the exact project, wait for a recognized
+settings view to settle, close it, and reopen settings to verify the requested
+value. **It never repeats a toggle or Save during that recovery.** A reopened
+readback must match before the batch continues. Reconciled receipts include
+`reconciled: true`; all recovery attempts and their errors are retained in
+`result.json` under `recoveries` and in `progress.log`.
+
+Changed identity/domain, duplicate or missing project names, sync errors,
+unsaved-change warnings, unrecognized dialogs, and mismatched readbacks stop
+the run. They are not classified as temporary based on message text. If an
+outcome cannot be confirmed within the limit, it stays uncertain.
+
+On an unrecovered failure, the queue stops. An error during Save or readback marks that row
 `uncertain`, with the error retained in the report. Previously verified rows
 remain recorded. Close or resolve the failed dialog, then rerun the same CSV,
 action and state directory. The runner freshly reads the current state before
 setting it; it does not blindly toggle the switch or trust an old success.
-Do not delete state to retry. A changed CSV or opposite action needs new state.
+Do not delete state to retry. Automatic history selects a separate folder for
+changed inputs; with an explicit `-StateRoot`, select a new folder yourself.
 
 If Kahua displays **Unable to sync** because a project with the same name is
 already synced, the runner reports that conflict and stops. A warning already
@@ -289,6 +353,39 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
 
 ## Validation and current limits
 
+- **November 6 project-open recovery fix:** the supplied production Check log
+  stopped at `project-open` when `KahuaDesktop.psm1`'s `FindAll` raised a wrapped
+  `ElementNotAvailableException`. Build `30725ef` had Local Files recovery but
+  did not cover this read. The local fix passes 22 navigation scenarios using
+  the real control reader with a simulated provider, plus four full-selector
+  regressions for stale header/picker reads, disabled recovery and an uncertain
+  click. All 175 checks across seven platform-neutral suites pass on macOS
+  PowerShell 7.6.9; all 19 PowerShell files parse. The guided launcher also
+  verifies that `-RecoveryAttempts 0` reaches Check and both Execute selections.
+  [Windows CI run 42094873358](https://github.com/jaintj95/kahua-migration/actions/runs/42094873358)
+  passed all **224 checks across ten suites** and parsed **19 scripts** in
+  Windows PowerShell `5.1.26100.33648` at commit `5c8bc8a`, including the new
+  navigation suite. Initial CI exposed two fixture assumptions about UIA
+  control-type values and default exception text; the fixture now uses numeric
+  control IDs and explicitly reproduces the supplied error message.
+  The recovery fix has not been deployed to the VM or checked against live
+  Kahua. The log does not establish why Kahua invalidated the original element.
+- The launcher/history suite passes 20 simulated scenarios on macOS PowerShell
+  7.6.9 and Windows PowerShell 5.1, including
+  automatic reuse, changed batches, preserved logs, legacy state, locks,
+  corrupt bindings, interactive prompts, refusal after a failed Check, and a
+  CSV changed during the APPLY prompt and Unicode history across retries.
+  The recovery suite passes 24 scenarios,
+  including a Save that persisted before its UI read failed, bounded stale
+  reads, disabled recovery, unconfirmed outcomes, identity changes, warnings,
+  and no repeated toggle/Save. [Windows CI run 42080880432](https://github.com/jaintj95/kahua-migration/actions/runs/42080880432)
+  passed all **198 checks across nine suites** and parsed all **18 PowerShell
+  files** at implementation commit `c098bfe`, using Windows PowerShell
+  `5.1.26100.33648`. Twelve PowerShell documentation examples also parsed locally.
+  Archive `30725ef` was extracted on the supervised VM on November 6 and the
+  launcher reached its CSV prompt. A completed live Check/Execute of that
+  version has not been verified. Hosted CI uses simulated controls and does
+  not validate the client's actual UI selectors or repair its sync-name conflict.
 - Doe's five-row CSV passed Plan for both Enable and Disable.
 - The suite passes 55 scenarios under local PowerShell 7.6.9 and Windows
   PowerShell 5.1, covering input validation, strict boolean
@@ -312,7 +409,7 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
   These fixtures use a simulated desktop; live observations are recorded
   separately below.
 - The Windows PowerShell 5.1 workflow parses all PowerShell source/test files.
-  It runs the environment identity and Local Files error suites as well as
+  It runs the launcher/history, recovery, environment identity and Local Files error suites as well as
   the flag suite alongside the existing copy, batch, and coordinator fixtures.
   See [Windows fixture runs](https://github.com/jaintj95/kahua-migration/actions/workflows/windows-local-sync.yml)
   for the result at a particular published commit.

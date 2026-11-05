@@ -70,7 +70,11 @@ function Wait-KahuaFlagFolders {
         $matches = @(Find-KahuaControl -Name Folders -Type Button -All)
         if ($matches.Count -gt 1) { throw 'Ambiguous Folders control in Local Files.' }
         if ($matches.Count -eq 1 -and $matches[0].Current.IsEnabled) { return }
-        if ([DateTime]::UtcNow -ge $deadline) { throw 'Timed out waiting for the Local Files Folders control.' }
+        if ([DateTime]::UtcNow -ge $deadline) {
+            $failure=[TimeoutException]::new('Timed out waiting for the Local Files Folders control.')
+            $failure.Data['KahuaFlagReadTimeout']=$true
+            throw $failure
+        }
         Start-Sleep -Milliseconds 250
     } while ($true)
 }
@@ -192,8 +196,39 @@ function Get-KahuaSearchProjectRows {
     return [pscustomobject]@{rows=@();complete=$false;reason='Project search has not exposed its result list.'}
 }
 
+function Wait-KahuaFlagProjectOpen {
+    param($Identity,[hashtable]$LogContext,[ValidateRange(0,3)][int]$RecoveryAttempts=2,
+        [ValidateRange(0,300)][int]$TimeoutSeconds=45)
+    # The project click has already been sent. Retry only the observations,
+    # acquiring a fresh root and controls each time. Keep one deadline across
+    # header loading, picker closure and all recovery attempts.
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    Invoke-KahuaFlagReadRecovery -RecoveryAttempts $RecoveryAttempts -LogContext $LogContext -Operation 'Verifying the opened project' -Read {
+        while ($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+            Assert-KahuaFlagNoSyncError
+            $root=Get-KahuaActiveRoot
+            $headers=@(Find-KahuaControl -Id Shell_PartitionSelector -Name "Current Project $($Identity.display)" -Type Button -Root $root -All)
+            if ($headers.Count -gt 1) { throw 'Ambiguous selected-project header; cannot verify the opened project.' }
+            $pickers=@(Find-KahuaControl -Id SearchBox -Type Edit -Root $root -All)
+            if ($pickers.Count -gt 1) { throw 'Ambiguous project search controls; cannot verify picker closure.' }
+            if ($watch.Elapsed.TotalSeconds -ge $TimeoutSeconds) { break }
+            if ($headers.Count -eq 1 -and $headers[0].Current.IsEnabled -and -not $pickers.Count) {
+                Confirm-KahuaFlagDomain -Environment $Identity.environment -Domain $Identity.domain
+                if ($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds) { return }
+                break
+            }
+            Write-KahuaFlagProgress $LogContext 'project-open' "Still waiting for the exact project header and closed picker (up to ${TimeoutSeconds}s)." -Heartbeat
+            Start-Sleep -Milliseconds 250
+        }
+        # This is the overall navigation deadline, not a recoverable Local
+        # Files read timeout. Retrying it would restart a completed wait.
+        throw [TimeoutException]::new("Timed out verifying opened project '$($Identity.display)' and closed picker. No project click was repeated.")
+    }
+}
+
 function Select-KahuaFlagProject {
-    param([string]$Environment,[string]$Domain,[string]$Name,[hashtable]$LogContext)
+    param([string]$Environment,[string]$Domain,[string]$Name,[hashtable]$LogContext,
+        [ValidateRange(0,3)][int]$RecoveryAttempts=2)
     Write-KahuaFlagProgress $LogContext 'project-home' 'Verifying the domain and returning to Home for project search.'
     Confirm-KahuaFlagDomain -Environment $Environment -Domain $Domain
     if (@(Find-KahuaControl -Id CloseModal -Type Button -All).Count) { throw 'Close the existing Kahua dialog before project search.' }
@@ -236,22 +271,19 @@ function Select-KahuaFlagProject {
     Write-KahuaFlagProgress $LogContext 'project-open' "Opening '$($chosen.identity.display)' and verifying its header."
     Invoke-KahuaControl $chosen.control -Click
     $display = $chosen.identity.display
-    [void](Wait-KahuaControl -Id Shell_PartitionSelector -Name "Current Project $display" -Type Button)
-    $deadline = [DateTime]::UtcNow.AddSeconds(15)
-    while (@(Find-KahuaControl -Id SearchBox -Type Edit -All).Count) {
-        if ([DateTime]::UtcNow -ge $deadline) { throw 'Project search did not close.' }
-        Write-KahuaFlagProgress $LogContext 'project-open' 'Still waiting for the project picker to close (up to 15s).' -Heartbeat
-        Start-Sleep -Milliseconds 250
-    }
-    Confirm-KahuaFlagDomain -Environment $Environment -Domain $Domain
-    [pscustomobject]@{environment=$Environment;domain=$Domain;project_name=$Name;
+    $identity=[pscustomobject]@{environment=$Environment;domain=$Domain;project_name=$Name;
         project_number=$chosen.identity.project_number;display=$display}
+    Wait-KahuaFlagProjectOpen -Identity $identity -LogContext $LogContext -RecoveryAttempts $RecoveryAttempts
+    return $identity
 }
 
 function Assert-KahuaFlagProject {
     param($Identity)
     Confirm-KahuaFlagDomain -Environment $Identity.environment -Domain $Identity.domain
-    [void](Find-KahuaControl -Id Shell_PartitionSelector -Name "Current Project $($Identity.display)" -Type Button)
+    # Recovery can run while a settings modal is open. The project header is
+    # on the verified main window, outside the modal's active control subtree.
+    $window = Get-KahuaWindow
+    [void](Find-KahuaControl -Id Shell_PartitionSelector -Name "Current Project $($Identity.display)" -Type Button -Root $window)
 }
 
 function Get-KahuaRootFlagToggle {
@@ -283,7 +315,7 @@ function Get-KahuaRootFlagToggle {
 }
 
 function Open-KahuaFlagSettings {
-    param($Identity,[hashtable]$LogContext)
+    param($Identity,[hashtable]$LogContext,[ValidateRange(0,3)][int]$RecoveryAttempts=2)
     Write-KahuaFlagProgress $LogContext 'settings-open' 'Opening My settings > Local Files for the selected project.'
     Assert-KahuaFlagProject -Identity $Identity
     Assert-KahuaFlagNoSyncError
@@ -291,6 +323,19 @@ function Open-KahuaFlagSettings {
     Invoke-KahuaControl (Find-KahuaControl -Id Shell_Settings -Type Button)
     Invoke-KahuaControl (Wait-KahuaControl -Id TitleText -Name 'My settings' -Type Text) -Click
     Invoke-KahuaControl (Wait-KahuaControl -Id ButtonText -Name 'Local Files' -Type Text) -Click
+    return (Invoke-KahuaFlagReadRecovery -RecoveryAttempts $RecoveryAttempts -LogContext $LogContext -Operation 'Waiting for Local Files' -Read {
+        Read-KahuaFlagSettingsContext -Identity $Identity -LogContext $LogContext
+    })
+}
+
+function Read-KahuaFlagSettingsContext {
+    param($Identity,[hashtable]$LogContext)
+    # Shared by normal reads and recovery. Only a recognized Local Files view
+    # for the exact project may be closed during reconciliation.
+    Assert-KahuaFlagProject -Identity $Identity
+    Assert-KahuaFlagNoSyncError
+    Assert-KahuaFlagNoUnsavedWarning
+    [void](Find-KahuaControl -Id TitleText -Name 'My settings' -Type Text)
     Write-KahuaFlagProgress $LogContext 'account-state' 'Waiting for Local Files account status.'
     $state = Wait-KahuaLocalFilesState
     if ($state -eq 'unconfigured') { throw 'Enable Local Files for the account manually once, then rerun. The project flag runner never initializes or resets account sync.' }
@@ -322,6 +367,7 @@ function Wait-KahuaFlagSave {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $quietSince = $null
     do {
+        Assert-KahuaFlagNoSyncError
         Assert-KahuaFlagNoUnsavedWarning
         $save = Find-KahuaControl -Name Save -Type Button
         $cancel = Find-KahuaControl -Name Cancel -Type Button
@@ -338,7 +384,9 @@ function Wait-KahuaFlagSave {
             }
         } else { $quietSince = $null }
         if ($watch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
-            throw 'Project sync Save did not settle. The result is uncertain; inspect the settings before resuming.'
+            $failure=[TimeoutException]::new('Project sync Save did not settle. The result is uncertain; inspect the settings before resuming.')
+            $failure.Data['KahuaFlagReadTimeout']=$true
+            throw $failure
         }
         Write-KahuaFlagProgress $LogContext 'save-wait' "Still waiting: Save enabled=$($save.Current.IsEnabled); Cancel enabled=$($cancel.Current.IsEnabled); Folders available=$($null -ne $toggle)." -Heartbeat
         Start-Sleep -Milliseconds 250
@@ -363,34 +411,58 @@ function Close-KahuaFlagSettings {
 }
 
 function Read-KahuaFlagSelection {
-    param($Identity,[hashtable]$LogContext)
-    $state = Open-KahuaFlagSettings -Identity $Identity -LogContext $LogContext
-    Write-KahuaFlagProgress $LogContext 'folders-read' 'Reading the Folders switch and local directory; checking for unsaved edits.'
-    $save = Find-KahuaControl -Name Save -Type Button
-    if ($save.Current.IsEnabled) { throw 'Local Files has unsaved edits. Resolve them manually before running.' }
-    $selection = (Get-KahuaRootFlagToggle).Current.ToggleState.ToString()
-    $paths = @(Find-KahuaControl -Type Button -All | Where-Object { $_.Current.Name -match '^[A-Za-z]:\\' })
-    if ($paths.Count -ne 1) { throw 'Cannot read the Local Files base directory.' }
-    $syncRoot = Join-Path (Join-Path $paths[0].Current.Name ('Kahua - '+$Identity.domain)) $Identity.project_name
-    Write-KahuaFlagProgress $LogContext 'folders-read' "Observed Folders=$selection; account sync=$state; directory=$syncRoot."
+    param($Identity,[hashtable]$LogContext,[ValidateRange(0,3)][int]$RecoveryAttempts=2)
+    [void](Open-KahuaFlagSettings -Identity $Identity -LogContext $LogContext -RecoveryAttempts $RecoveryAttempts)
+    $snapshot = Invoke-KahuaFlagReadRecovery -RecoveryAttempts $RecoveryAttempts -LogContext $LogContext -Operation 'Reading Local Files' -Read {
+        $state = Read-KahuaFlagSettingsContext -Identity $Identity -LogContext $LogContext
+        Write-KahuaFlagProgress $LogContext 'folders-read' 'Reading the Folders switch and local directory; checking for unsaved edits.'
+        $save = Find-KahuaControl -Name Save -Type Button
+        if ($save.Current.IsEnabled) { throw 'Local Files has unsaved edits. Resolve them manually before running.' }
+        $selection = (Get-KahuaRootFlagToggle).Current.ToggleState.ToString()
+        $paths = @(Find-KahuaControl -Type Button -All | Where-Object { $_.Current.Name -match '^[A-Za-z]:\\' })
+        if ($paths.Count -ne 1) { throw 'Cannot read the Local Files base directory.' }
+        $syncRoot = Join-Path (Join-Path $paths[0].Current.Name ('Kahua - '+$Identity.domain)) $Identity.project_name
+        Write-KahuaFlagProgress $LogContext 'folders-read' "Observed Folders=$selection; account sync=$state; directory=$syncRoot."
+        [pscustomobject]@{selection=$selection;account_sync_state=$state;sync_root=$syncRoot}
+    }
     Close-KahuaFlagSettings -LogContext $LogContext
-    [pscustomobject]@{selection=$selection;account_sync_state=$state;sync_root=$syncRoot}
+    return $snapshot
 }
 
 function Get-KahuaProjectFlag {
-    param($Identity,[hashtable]$LogContext)
-    [void](Read-KahuaFlagSelection -Identity $Identity -LogContext $LogContext)
+    param($Identity,[hashtable]$LogContext,[ValidateRange(0,3)][int]$RecoveryAttempts=2)
+    [void](Read-KahuaFlagSelection -Identity $Identity -LogContext $LogContext -RecoveryAttempts $RecoveryAttempts)
     Write-KahuaFlagProgress $LogContext 'reopen' 'Reopening settings for an independent read of the current switch.'
-    $fresh = Read-KahuaFlagSelection -Identity $Identity -LogContext $LogContext
+    $fresh = Read-KahuaFlagSelection -Identity $Identity -LogContext $LogContext -RecoveryAttempts $RecoveryAttempts
     [pscustomobject]@{environment=$Identity.environment;domain=$Identity.domain;project_name=$Identity.project_name;
         project_number=$Identity.project_number;display=$Identity.display;scope='project-files';
         selection=$fresh.selection;account_sync_state=$fresh.account_sync_state;sync_root=$fresh.sync_root;
         reopened=$true;verified_at_utc=[DateTime]::UtcNow.ToString('o')}
 }
 
+function Confirm-KahuaFlagAfterSave {
+    param($Identity,[string]$Desired,[hashtable]$LogContext)
+    # This function never toggles, saves, cancels, or dismisses warnings. It can
+    # close only the recognized, settled settings view for the exact project.
+    Assert-KahuaFlagProject -Identity $Identity
+    Assert-KahuaFlagNoSyncError
+    Assert-KahuaFlagNoUnsavedWarning
+    $dialogs = @(Find-KahuaControl -Id CloseModal -Type Button -All)
+    if ($dialogs.Count -gt 1) { throw 'Multiple dialogs prevent safe Save reconciliation.' }
+    if ($dialogs.Count) {
+        [void](Read-KahuaFlagSettingsContext -Identity $Identity -LogContext $LogContext)
+        Wait-KahuaFlagSave -Desired $Desired -LogContext $LogContext
+        Close-KahuaFlagSettings -LogContext $LogContext
+    }
+    $fresh = Read-KahuaFlagSelection -Identity $Identity -LogContext $LogContext -RecoveryAttempts 0
+    if ($fresh.selection -cne $Desired) { throw 'Save reconciliation did not confirm the requested value. No additional toggle or Save was attempted.' }
+    return $fresh
+}
+
 function Set-KahuaProjectFlag {
-    param($Identity,[Parameter(Mandatory=$true)][bool]$Enabled,[hashtable]$LogContext)
-    $state = Open-KahuaFlagSettings -Identity $Identity -LogContext $LogContext
+    param($Identity,[Parameter(Mandatory=$true)][bool]$Enabled,[hashtable]$LogContext,
+        [ValidateRange(0,3)][int]$RecoveryAttempts=2)
+    $state = Open-KahuaFlagSettings -Identity $Identity -LogContext $LogContext -RecoveryAttempts $RecoveryAttempts
     Write-KahuaFlagProgress $LogContext 'folders-current' 'Checking current switch, unsaved edits, and account status before changing anything.'
     $save = Find-KahuaControl -Name Save -Type Button
     if ($save.Current.IsEnabled) { throw 'Local Files has unsaved edits. Resolve them manually before running.' }
@@ -407,19 +479,39 @@ function Set-KahuaProjectFlag {
         Start-Sleep -Milliseconds 300
     }
     if ((Get-KahuaRootFlagToggle).Current.ToggleState.ToString() -cne $desired) { throw 'The project Folders switch did not reach the requested value. No Save was attempted.' }
-    if ($changed) {
-        Write-KahuaFlagProgress $LogContext 'save' "Saving requested Folders=$desired."
-        Invoke-KahuaControl (Wait-KahuaControl -Name Save -Type Button)
-        Wait-KahuaFlagSave -Desired $desired -LogContext $LogContext
+    $reconciled=$false
+    try {
+        if ($changed) {
+            Write-KahuaFlagProgress $LogContext 'save' "Saving requested Folders=$desired."
+            Invoke-KahuaControl (Wait-KahuaControl -Name Save -Type Button)
+            Wait-KahuaFlagSave -Desired $desired -LogContext $LogContext
+        }
+        Close-KahuaFlagSettings -LogContext $LogContext
+        Write-KahuaFlagProgress $LogContext 'reopen' "Reopening settings to verify saved Folders=$desired."
+        $fresh = Read-KahuaFlagSelection -Identity $Identity -LogContext $LogContext -RecoveryAttempts $RecoveryAttempts
+    } catch {
+        $failure=$_
+        if (-not $RecoveryAttempts -or -not (Test-KahuaFlagTransientFailure $failure.Exception)) { throw }
+        for ($retry=1; $retry -le $RecoveryAttempts; $retry++) {
+            $event=[pscustomobject]@{operation='Reconcile Save';retry=$retry;error=$failure.Exception.Message;at_utc=[DateTime]::UtcNow.ToString('o')}
+            if ($LogContext) { $LogContext.Recoveries.Add($event) }
+            Write-KahuaFlagProgress $LogContext 'save-recovery' "Checking the actual saved value after a temporary UI failure ($retry/$RecoveryAttempts). No toggle or Save will be repeated." -Level WARN
+            Start-Sleep -Milliseconds 500
+            try {
+                $fresh = Confirm-KahuaFlagAfterSave -Identity $Identity -Desired $desired -LogContext $LogContext
+                $reconciled=$true
+                break
+            } catch {
+                $failure=$_
+                if ($retry -eq $RecoveryAttempts -or -not (Test-KahuaFlagTransientFailure $failure.Exception)) { throw }
+            }
+        }
     }
-    Close-KahuaFlagSettings -LogContext $LogContext
-    Write-KahuaFlagProgress $LogContext 'reopen' "Reopening settings to verify saved Folders=$desired."
-    $fresh = Read-KahuaFlagSelection -Identity $Identity -LogContext $LogContext
     if ($fresh.selection -cne $desired) { throw 'The saved project sync flag did not persist after reopening.' }
     [pscustomobject]@{environment=$Identity.environment;domain=$Identity.domain;project_name=$Identity.project_name;
         project_number=$Identity.project_number;display=$Identity.display;scope='project-files';
         selection=$fresh.selection;account_sync_state=$fresh.account_sync_state;sync_root=$fresh.sync_root;
-        changed=$changed;previous_selection=$before;reopened=$true;verified_at_utc=[DateTime]::UtcNow.ToString('o')}
+        changed=$changed;previous_selection=$before;reopened=$true;reconciled=$reconciled;verified_at_utc=[DateTime]::UtcNow.ToString('o')}
 }
 
 Export-ModuleMember -Function Initialize-KahuaFlagDomain,Confirm-KahuaFlagDomain,Select-KahuaFlagProject,Get-KahuaProjectFlag,Set-KahuaProjectFlag
