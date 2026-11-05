@@ -6,16 +6,73 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'KahuaDesktop.psm1')
 Import-Module (Join-Path $PSScriptRoot 'KahuaSyncFlags.psm1')
 
-function Assert-KahuaFlagEnvironment {
-    param([string]$Environment)
-    $window = Get-KahuaWindow
+function Assert-KahuaFlagProductionPackage {
+    param($Window)
+    # Production has no environment footer. Identify the executable belonging
+    # to this verified window against the current user's registered package,
+    # including its publisher-specific family. An absent label is not evidence.
+    $process = Get-Process -Id $Window.Current.ProcessId -ErrorAction Stop
+    $path = [string]$process.Path
+    if ([string]::IsNullOrWhiteSpace($path)) { throw 'Cannot read the running Kahua executable path to verify PRODUCTION.' }
+    $packages = @(Get-AppxPackage -Name 'Kahua.Windows' -ErrorAction Stop | Where-Object {
+        $_.Name -ceq 'Kahua.Windows' -and $_.PackageFamilyName -ceq 'Kahua.Windows_3hchyjmf292n6' -and
+            -not [string]::IsNullOrWhiteSpace($_.InstallLocation)
+    })
+    if ($packages.Count -ne 1) { throw 'Cannot uniquely verify the registered PRODUCTION Kahua Windows package for this user.' }
+    $expected = Join-Path $packages[0].InstallLocation 'kahua.windows.exe'
+    if (-not [string]::Equals([IO.Path]::GetFullPath($path),[IO.Path]::GetFullPath($expected),[StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The open Kahua window is not running from the registered PRODUCTION package. Open the production Kahua client and close other Kahua windows.'
+    }
+}
+
+function Get-KahuaFlagEnvironmentLabels {
+    param($Window,[string]$Environment)
     # The footer can be clipped on a smaller RDP viewport. Read the exact
     # environment text in this verified Kahua process even when offscreen.
     $condition = [Windows.Automation.AndCondition]::new(
         [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty,$Environment),
         [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty,[Windows.Automation.ControlType]::Text))
-    $labels = @(Select-KahuaUniqueElement @($window.FindAll([Windows.Automation.TreeScope]::Descendants,$condition)))
+    Select-KahuaUniqueElement @($Window.FindAll([Windows.Automation.TreeScope]::Descendants,$condition))
+}
+
+function Assert-KahuaFlagEnvironment {
+    param([string]$Environment)
+    $window = Get-KahuaWindow
+    if ($Environment -eq 'PRODUCTION') {
+        Assert-KahuaFlagProductionPackage -Window $window
+        return
+    }
+    $labels = @(Get-KahuaFlagEnvironmentLabels -Window $window -Environment $Environment)
     if ($labels.Count -ne 1) { throw "The Kahua window does not expose one exact environment label '$Environment'." }
+}
+
+function Assert-KahuaFlagNoSyncError {
+    # Read from the verified window: the error can overlay Local Files and
+    # expose duplicate accessibility objects outside the active settings root.
+    $window = Get-KahuaWindow
+    if (-not @(Find-KahuaControl -Id CaptionTextBlock -Name 'Unable to sync' -Type Text -Root $window -All).Count) { return }
+    $details = @(Find-KahuaControl -Id DetailsTextBlock -Type Text -Root $window -All | Where-Object {
+        (Get-KahuaControlName $_) -match '^You currently have a project of the same name already synced\.'
+    })
+    if ($details.Count) {
+        throw 'Kahua cannot sync this project because a project of the same name is already synced. Have your Kahua administrator resolve the existing sync mapping/name conflict, then rerun the same batch and state directory. Do not reset sync or delete/rename synced folders to bypass this error.'
+    }
+    throw "Kahua reports 'Unable to sync'. Inspect the open dialog and resolve it before resuming the same batch and state directory."
+}
+
+function Wait-KahuaFlagFolders {
+    param([int]$TimeoutSeconds=30)
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        # A duplicate-name warning appears asynchronously while Local Files
+        # loads. Report it before accepting any background Folders control.
+        Assert-KahuaFlagNoSyncError
+        $matches = @(Find-KahuaControl -Name Folders -Type Button -All)
+        if ($matches.Count -gt 1) { throw 'Ambiguous Folders control in Local Files.' }
+        if ($matches.Count -eq 1 -and $matches[0].Current.IsEnabled) { return }
+        if ([DateTime]::UtcNow -ge $deadline) { throw 'Timed out waiting for the Local Files Folders control.' }
+        Start-Sleep -Milliseconds 250
+    } while ($true)
 }
 
 function Get-KahuaFlagBreadcrumbDomain {
@@ -70,6 +127,7 @@ function Initialize-KahuaFlagDomain {
     param([string]$Environment,[string]$Domain,[switch]$Switch,[hashtable]$LogContext)
     Write-KahuaFlagProgress $LogContext 'environment' "Checking the Kahua window and exact environment '$Environment'."
     Assert-KahuaFlagEnvironment -Environment $Environment
+    Assert-KahuaFlagNoSyncError
     if (@(Find-KahuaControl -Id CloseModal -Type Button -All).Count) { throw 'Close the existing Kahua dialog before domain selection.' }
     Write-KahuaFlagProgress $LogContext 'domain-home' 'Opening Home to read the selected domain.'
     Invoke-KahuaControl (Find-KahuaControl -Id HomeButton -Name Home -Type Button)
@@ -228,6 +286,7 @@ function Open-KahuaFlagSettings {
     param($Identity,[hashtable]$LogContext)
     Write-KahuaFlagProgress $LogContext 'settings-open' 'Opening My settings > Local Files for the selected project.'
     Assert-KahuaFlagProject -Identity $Identity
+    Assert-KahuaFlagNoSyncError
     if (@(Find-KahuaControl -Id CloseModal -Type Button -All).Count) { throw 'Close the existing settings/dialog before continuing.' }
     Invoke-KahuaControl (Find-KahuaControl -Id Shell_Settings -Type Button)
     Invoke-KahuaControl (Wait-KahuaControl -Id TitleText -Name 'My settings' -Type Text) -Click
@@ -244,7 +303,7 @@ function Open-KahuaFlagSettings {
         if (@(Find-KahuaControl -Name $Identity.display -Type Text -Root $container -All).Count -eq 1) { $matched=$true; break }
     }
     if (-not $matched) { throw 'Local Files is showing a different project.' }
-    [void](Wait-KahuaControl -Name Folders -Type Button)
+    Wait-KahuaFlagFolders
     return $state
 }
 

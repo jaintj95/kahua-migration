@@ -47,5 +47,9 @@ jobs:
         run: .\Test-KahuaSyncCoordinator.ps1
       - name: Check project sync flags with simulated Kahua
         run: .\Test-KahuaSyncFlags.ps1
+      - name: Check production client identity with simulated packages
+        run: .\Test-KahuaFlagEnvironment.ps1
+      - name: Check Local Files error handling with simulated controls
+        run: .\Test-KahuaFlagSyncErrors.ps1
       - name: Check desktop geometry recovery with simulated controls
         run: .\Test-KahuaDesktopGeometry.ps1
