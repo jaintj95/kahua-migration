@@ -4,6 +4,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+$script:KahuaBoundingRectangleProperty=[Windows.Automation.AutomationElement]::BoundingRectangleProperty
+$script:KahuaNameProperty=[Windows.Automation.AutomationElement]::NameProperty
 if (-not ('KahuaMigration.NativeInput' -as [type])) {
     Add-Type @'
 using System;
@@ -41,17 +43,77 @@ function Select-KahuaUniqueElement {
     }
 }
 
+function Invoke-KahuaReadRetry {
+    param([Parameter(Mandatory=$true)][scriptblock]$Read, [int]$TimeoutMilliseconds=3000,
+        [switch]$RequireResult, [string]$UnavailableMessage='Kahua did not expose the requested view before the read deadline.')
+    # For read-only snapshots only. The caller must acquire fresh elements on
+    # every attempt. Never wrap clicks, toggles, Save, or other writes here.
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    do {
+        try {
+            $result=@(& $Read)
+            if (-not $RequireResult -or $result.Count) { return $result }
+            if ($watch.ElapsedMilliseconds -ge $TimeoutMilliseconds) { throw $UnavailableMessage }
+        } catch {
+            $exception=$_.Exception; $stale=$false
+            while ($exception) {
+                if ($exception.GetType().Name -eq 'ElementNotAvailableException') { $stale=$true; break }
+                $exception=$exception.InnerException
+            }
+            if (-not $stale -or $watch.ElapsedMilliseconds -ge $TimeoutMilliseconds) { throw }
+        }
+        Start-Sleep -Milliseconds 100
+    } while ($true)
+}
+
+function Get-KahuaControlRectangle {
+    param([Parameter(Mandatory=$true)]$Control, [int]$TimeoutMilliseconds=3000)
+    # Use a method call so PowerShell surfaces provider exceptions instead of
+    # silently turning a failed property getter into null followed by a
+    # misleading Width/IsEmpty StrictMode error. Require a complete value;
+    # never invent coordinates or click using an old value.
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    $reason='no rectangle returned'
+    do {
+        try {
+            $rect=$Control.GetCurrentPropertyValue($script:KahuaBoundingRectangleProperty)
+            if ($null -ne $rect) {
+                $missing=@('X','Y','Width','Height','Left','Top','Right','Bottom','IsEmpty' | Where-Object {
+                    -not $rect.PSObject.Properties[$_]
+                })
+                if (-not $missing.Count) { return $rect }
+                $reason="rectangle type '$($rect.GetType().FullName)' is missing $($missing -join ', ')"
+            } else { $reason='no rectangle returned' }
+        } catch {
+            # An expired element cannot be repaired by rereading its bounds.
+            # Preserve the exception so a read-only caller can reacquire it.
+            throw
+        }
+        if ($watch.ElapsedMilliseconds -ge $TimeoutMilliseconds) {
+            throw "Kahua control geometry is unavailable after ${TimeoutMilliseconds}ms: $reason. Wait for the view to finish loading, then retry the same run."
+        }
+        Start-Sleep -Milliseconds 100
+    } while ($true)
+}
+
+function Get-KahuaControlName {
+    param([Parameter(Mandatory=$true)]$Control)
+    # Method access preserves expired-element errors that PowerShell's nested
+    # Current.Name getter can otherwise turn into a null value.
+    return [string]$Control.GetCurrentPropertyValue($script:KahuaNameProperty)
+}
+
 function Get-KahuaActiveRoot {
     $window = Get-KahuaWindow
     $views = @($window.FindAll([Windows.Automation.TreeScope]::Descendants,
         [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty, 'ModalView')) |
-        Where-Object { -not $_.Current.IsOffscreen -and $_.Current.BoundingRectangle.Width -gt 0 })
+        Where-Object { -not $_.Current.IsOffscreen -and (Get-KahuaControlRectangle $_).Width -gt 0 })
     $views=@(Select-KahuaUniqueElement $views)
     if ($views.Count -gt 1) { throw 'Multiple Kahua dialogs are open.' }
     if ($views.Count -eq 1) { return $views[0] }
     $modals = @($window.FindAll([Windows.Automation.TreeScope]::Descendants,
         [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty, 'ModalRoot')) |
-        Where-Object { -not $_.Current.IsOffscreen -and $_.Current.BoundingRectangle.Width -gt 0 })
+        Where-Object { -not $_.Current.IsOffscreen -and (Get-KahuaControlRectangle $_).Width -gt 0 })
     $modals=@(Select-KahuaUniqueElement $modals)
     if ($modals.Count -gt 1) { throw 'Multiple Kahua dialogs are open; refusing ambiguous controls.' }
     if ($modals.Count -eq 1) { return $modals[0] }
@@ -72,7 +134,11 @@ function Find-KahuaControl {
     $condition = $conditions[0]
     if ($conditions.Count -gt 1) { $condition = [Windows.Automation.AndCondition]::new($conditions.ToArray()) }
     $matches = @($Root.FindAll([Windows.Automation.TreeScope]::Descendants, $condition) |
-        Where-Object { -not $_.Current.IsOffscreen -and $_.Current.BoundingRectangle.Width -gt 0 -and $_.Current.BoundingRectangle.Height -gt 0 })
+        Where-Object {
+            if ($_.Current.IsOffscreen) { return $false }
+            $rect=Get-KahuaControlRectangle $_
+            return $rect.Width -gt 0 -and $rect.Height -gt 0
+        })
     $matches=@(Select-KahuaUniqueElement $matches)
     if ($All) { return $matches }
     if ($matches.Count -ne 1) { throw "Expected one control id='$Id' name='$Name' type='$Type'; found $($matches.Count)." }
@@ -114,11 +180,11 @@ function Invoke-KahuaControl {
     if ([KahuaMigration.NativeInput]::GetForegroundWindow() -ne $handle) { throw 'Cannot focus Kahua; interactive desktop is required.' }
     $expectedName = $Control.Current.Name
     $expectedId = $Control.Current.AutomationId
-    $rect = $Control.Current.BoundingRectangle
+    $rect = Get-KahuaControlRectangle $Control
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
     do {
         Start-Sleep -Milliseconds 350
-        $settled = $Control.Current.BoundingRectangle
+        $settled = Get-KahuaControlRectangle $Control
         if ($settled -eq $rect -and -not $rect.IsEmpty -and $rect.Width -gt 0 -and $rect.Height -gt 0) { break }
         if ([DateTime]::UtcNow -ge $deadline) { throw 'The intended control did not settle before clicking.' }
         $rect = $settled
@@ -194,15 +260,15 @@ function Assert-KahuaAccount {
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
     $previousBounds = ''
     do {
-        $top = $header.Current.BoundingRectangle
+        $top = Get-KahuaControlRectangle $header
         $closes = @(Find-KahuaControl -Type Button -Root $window -All | Where-Object {
-            $r = $_.Current.BoundingRectangle
+            $r = Get-KahuaControlRectangle $_
             -not $_.Current.Name -and -not $_.Current.AutomationId -and
                 $r.Left -ge $top.Right -and $r.Top -lt $top.Bottom -and $r.Bottom -gt $top.Top
         })
         if ($closes.Count -gt 1) { throw 'The Account drawer close button is ambiguous.' }
         if ($closes.Count -eq 1) {
-            $bounds = $top.ToString() + '|' + $closes[0].Current.BoundingRectangle.ToString()
+            $bounds = $top.ToString() + '|' + (Get-KahuaControlRectangle $closes[0]).ToString()
             if ($bounds -ceq $previousBounds) { break }
             $previousBounds = $bounds
         } else { $previousBounds = '' }
@@ -211,10 +277,10 @@ function Assert-KahuaAccount {
     } while ($true)
     $close = $closes[0]
     try {
-        $bottom = $mySettings.Current.BoundingRectangle
-        $right = $close.Current.BoundingRectangle.Right
+        $bottom = Get-KahuaControlRectangle $mySettings
+        $right = (Get-KahuaControlRectangle $close).Right
         $domains = @(Find-KahuaControl -Name $Domain -Type Text -Root $window -All | Where-Object {
-            $r = $_.Current.BoundingRectangle
+            $r = Get-KahuaControlRectangle $_
             $r.Left -ge $top.Left -and $r.Right -le $right -and
                 $r.Top -ge $top.Bottom -and $r.Bottom -le $bottom.Top
         })

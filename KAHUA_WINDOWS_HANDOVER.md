@@ -19,16 +19,17 @@ separate browser workflow. Running commands and recovery steps are in
 The newer [project flag runner](SYNC_FLAGS.md) has a narrower purpose: it sets
 the named project's own Folders switch, including whatever content Doe places
 in that directory. It verifies the setting, not completed transfers. It does
-not select parent or child projects. Its 50 simulated scenarios passed locally
-and in Windows PowerShell 5.1. After the Cloud PC upgrade to 4 vCPUs / 16 GB,
+not select parent or child projects. Its 55 simulated flag scenarios and 16
+geometry/read scenarios passed locally and in Windows PowerShell 5.1. After
+the Cloud PC upgrade to 4 vCPUs / 16 GB,
 all five projects passed a live read-only Check, including nested projects.
 A separate test CSV corrected `222 - Bellevue Park` to Kahua's exact name
 `221 - Bellevue Park`; Doe's original CSV is preserved.
 
 After the user returned VM access, the corrected runner completed Seattle
 **On to Off at 02:02:01 IST, then Off to On at 02:03:11 IST on November 5**.
-Both runs saved, closed, reopened, and returned `flags-verified`. Seattle is
-restored to its original On setting. The runner now waits for Folders to
+Both runs saved, closed, reopened, and returned `flags-verified`. Seattle was
+restored to its original On setting at that time. The runner now waits for Folders to
 become available and Save/Cancel to stay inactive before closing settings.
 
 Two earlier attempts remain failed in their original reports. Disable
@@ -39,11 +40,25 @@ temporarily disabled Folders control, but a reopened read confirmed On at
 01:57:42 IST on November 5. Resuming each saved run read the persisted value
 and made no further toggle or Save. The prior user-requested pause and its
 Off readback remain in `sync-flags-20261104\handoff-20261104-230427.json`;
-they are historical, not the final On state.
-The final five-project read-only Check completed at **02:04:49 IST on
+they are historical observations.
+The pilot's final five-project read-only Check completed at **02:04:49 IST on
 November 5**, confirming Seattle On and the other four Off. Zero migration
 workers were confirmed, and the remote connection was released. The completed
 record is `sync-flags-20261104\handoff-20261105-completed.json`.
+
+A later debugging Check completed at **18:36:52 IST on November 5**, attempt
+`20261105T130539Z-12534cb0`, with exit code 0 in 73.5 seconds. **All five
+projects were Off**, including Seattle; every receipt confirmed a reopened
+read. This is the latest observed state. The debugging session only ran
+Plan/Check and made no project flag changes; it does not establish when or why
+Seattle changed after the earlier pilot. The initial run had failed with a
+missing `Width` property. The fix adds complete rectangle reads and bounded
+fresh breadcrumb reads, and the remote viewport was expanded to expose the
+project header. Six deployed source/test hashes matched local files; no worker
+remained active. The original CSV and failed attempts were preserved. A separate
+corrected CSV uses `221 - Bellevue Park`. The saved VM record is
+`Documents\KahuaDebug-20261105\debug-handoff-20261105.json`.
+
 Existing transfer and session risks remain relevant; the simpler scope does
 not repair Kahua's internal synchronization mechanism. This flag-only test
 does not establish that the VM upgrade resolved earlier File Manager errors.
@@ -347,8 +362,11 @@ still pending.
 | Trusted breadcrumb and apparent readiness before rows changed | Incorrect missing-file results. Added changed/stable row and root checks; live stale-view rejection passed. See K03. | High unattended |
 | Selected the main window Close control while testing the Account drawer | Closed Kahua and required sign-in again. Corrected the drawer target, hit testing, and post-close window check. No upload occurred in that retry. | Medium |
 | Used stale or ambiguous accessibility objects and an incorrect comparison API | Element-not-available or wrong-target failures. Added modal scoping, runtime-ID deduplication, fresh lookup, correct native comparison, and bounded waits. | Medium |
-| Initial post-reboot control read had no `Width` property | The first diagnostic stopped before file work. Repeating after manual project selection passed; the startup reader failure has not been independently fixed. | Medium supervised; High unattended |
-| November 4 pre-upgrade project-selection read had no `IsEmpty` property | The pre-upgrade settings check stopped before selecting Seattle or changing sync. The windowed view had first clipped the environment label; maximizing cleared that visibility issue, but the rectangle-read failure remains unresolved in the shared desktop helper. | Medium supervised; High unattended |
+| Initial post-reboot control read had no `Width` property; repeated during November 5 Warehouse Check | Both attempts stopped before file work. The helper now uses UI Automation's property method, requires a complete rectangle, and briefly retries missing data. It preserves expired-control errors for fresh read-only lookup; 16 geometry/read fixtures and the 18:36 five-project Check passed. Persistent failures still stop. | Medium supervised; High unattended; original startup timing is not fully reproduced |
+| November 4 pre-upgrade project-selection read had no `IsEmpty` property | The check stopped before selecting Seattle or changing sync. The shared complete-rectangle reader now covers this property as well as Width; incomplete/empty values are tested without invented coordinates. The original pre-upgrade startup sequence was not rerun. | Medium supervised; High unattended |
+| November 5 breadcrumb enumeration used expired controls, a null name, or a temporarily absent breadcrumb | Read-only retries failed after project navigation with `ElementNotAvailableException`, a null-valued method call, or a misleading disabled-breadcrumb message. Reads now reacquire the entire snapshot for up to three seconds, use the property method for names, and wait for a nonempty breadcrumb. Partial snapshots are discarded; clicks and Save are not retried. Regression cases and the 18:36 five-project Check pass. | Medium; persistent UI provider failures still stop the queue |
+| No visible progress while Check navigated and read settings | Operators could not distinguish waiting, failure, and activity. Added timestamped console output and a flushed per-attempt UTF-8 `progress.log`, project counts, step names, polling messages and failure context. A blocked native UI call cannot emit a heartbeat while blocked. | Low for tested logging; Medium for diagnosing a blocked provider call |
+| Narrow remote viewport hid the selected-project header | A November 5 retry timed out although the header's exact identity remained in accessibility data with `IsOffscreen=True` and empty bounds. Expanding the remote window restored visible bounds. The guide requires both Kahua and the remote session to be large enough to show the project name. | Medium on untested layouts; identity checks deliberately stop |
 | Assumed Invoke and immediate child-control availability were sufficient | Filter/search/folder/download actions failed or lagged. Added verified clicks, popup closure checks, and waits for refreshed controls. | Medium |
 | Forced a nested module reload in the new flag adapter | Removed reporting helpers already imported by the coordinator. Removed the nested `-Force`; the helper-availability regression and 50-scenario suite passed in Windows PowerShell 5.1. | Low for the tested import order |
 | Used a narrow selected-project picker for flag search | The picker could open outside the usable viewport. The flag runner now searches from Home; the corrected five-project Check included nested partitions. | Medium on untested layouts |
@@ -358,6 +376,7 @@ still pending.
 | Windows short path aliases could defeat the staging/sync overlap check | Staging could be accepted inside sync. Canonicalized existing path ancestors; Windows safety fixtures passed. | Low for tested cases |
 | PowerShell converted a null journal-replacement argument to an empty path | Atomic journal replacement failed in testing. Corrected the null argument representation; journal fixtures passed. | Low for tested cases |
 | Development command path escaping and foreground focus mistakes | One trial used a wrong state-directory spelling; another intended test command did not run after focus changed. Preserved the separate trial, restored explicit paths/focus checks, and verified deployed hashes. Failed or unrun tests were not counted as passes. | Medium operational |
+| Logging test assumed redirected console lines never wrap | Windows PowerShell 5.1 wrapped a long log path and caused a false fixture failure. The assertion now ignores inserted line breaks while requiring the complete path. All 55 flag scenarios passed afterward. | Low for the tested output formats |
 
 ## Evidence retained for support and handover
 

@@ -17,7 +17,9 @@ exact project names, sets each project's own Folders switch to the requested
 boolean, and verifies the saved setting. Doe places the files and Kahua handles
 the transfers. Five live project reads passed, and Seattle completed a saved
 Disable/Enable cycle after the Save wait was corrected. The guide records the
-50 passing simulated scenarios, exact-name CSV correction, and pilot limits.
+55 passing flag scenarios, 16 geometry/read scenarios, exact-name CSV correction,
+and pilot limits. Each flag run prints its current project and step and saves
+a live `progress.log`; the guide includes the command to follow that log.
 
 For **documents and photos**, see [LOCAL_FILE_SYNC.md](LOCAL_FILE_SYNC.md).
 The PowerShell CSV runner selects existing projects, controls Local Files Sync,

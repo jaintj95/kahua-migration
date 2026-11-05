@@ -176,10 +176,23 @@ Run $state
 Assert (@(Events).Count -eq $eventsBeforePlan) 'Plan touched desktop'
 Assert ((Read-Latest $state).status -eq 'planned') 'Plan report missing'
 $passed++
-Run $state Check
+$consoleLog=Join-Path $testRoot 'check-console.log'
+$successOutput=@(& $runner -CsvPath $csv -Environment DEVPRODUCTION -Action Enable -StateRoot $state -Mode Check 6> $consoleLog)
 Assert (-not @(Events | Where-Object { $_ -match '^(SET|SAVE) ' }).Count) 'Check changed a flag'
 Assert (@(Events | Where-Object { $_ -ceq 'SWITCH Onindus' }).Count -eq 1) 'CSV domain was not selected before project search'
 Assert ((Read-Latest $state).projects.Count -eq 2) 'Check omitted a row'
+$passed++
+$checkReport=Read-Latest $state
+$checkLogPath=$checkReport.progress_log
+$checkLog=[IO.File]::ReadAllText($checkLogPath)
+Assert ($successOutput.Count -eq 1 -and $successOutput[0] -match '^checked:') 'Progress messages polluted the success output stream'
+Assert ($checkLog -match '\[Check/Preflight 1/2 \| One\]' -and $checkLog -match '\[Check/Preflight 2/2 \| Two\]') 'Live log omitted project names or queue positions'
+Assert ($checkLog -match 'checked: Folders=Off' -and $checkLog -match 'complete: checked: 2/2') 'Live log omitted the current selection or final summary'
+Assert ($checkLog -match '\[\+\d+\.\d+s\]' -and $checkLog -match '\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{2}:\d{2}') 'Live log omitted elapsed time or timestamp offset'
+# Windows PowerShell 5.1 formats redirected information records at the host
+# width. Ignore its inserted line breaks when checking the complete path.
+$consoleText=(Get-Content $consoleLog -Raw) -replace '[\r\n]',''
+Assert ($consoleText.Contains($checkLogPath)) 'Console did not show where its durable log was written'
 $passed++
 Run $state Execute
 $report=Read-Latest $state
@@ -189,6 +202,9 @@ $trace=@(Events)
 $firstSet=0
 while ($firstSet -lt $trace.Count -and $trace[$firstSet] -notmatch '^SET ') { $firstSet++ }
 Assert (@($trace[0..($firstSet-1)] | Where-Object { $_ -match '^READ ' }).Count -ge 2) 'Mutation began before all projects were checked'
+$passed++
+Assert ([IO.File]::ReadAllText($checkLogPath) -ceq $checkLog) 'A subsequent attempt modified the previous progress log'
+Assert ((Read-Latest $state).progress_log -cne $checkLogPath) 'A subsequent attempt reused the previous log file'
 $passed++
 $saves=@(Events | Where-Object { $_ -match '^SAVE ' }).Count
 $reads=@(Events | Where-Object { $_ -match '^READ ' }).Count
@@ -208,8 +224,14 @@ foreach ($missing in @('Missing','Duplicate')) {
     $count=@(Events).Count
     Expect-Error { Run (Join-Path $testRoot $missing) Execute } 'not found|Duplicate'
     Assert (-not @(Events | Select-Object -Skip $count | Where-Object { $_ -match '^(SET|SAVE) ' }).Count) 'Failed lookup allowed partial batch mutation'
+    $failure=Read-Latest (Join-Path $testRoot $missing)
+    $failureLog=[IO.File]::ReadAllText($failure.progress_log)
+    Assert ($failure.failed_step -eq 'project' -and $failure.failed_phase -eq 'Preflight') 'Failed report lost the active step or phase'
+    Assert ($failureLog -match ('2/2 \| '+[regex]::Escape($missing)) -and $failureLog -match '\[ERROR\].*STOPPED:') 'Failure log omitted the failing row or error'
+    Assert ($failureLog -notmatch 'complete:') 'A failed lookup was logged as complete'
 }
 $passed++
+$passed++ # Failed attempt progress remains useful without a success report.
 Write-CsvText "domain,project_name`nOnindus,One`nOnindus,Two`n"
 [IO.File]::WriteAllText((Join-Path $runnerDir 'wrong-domain'),'fixture')
 $count=@(Events).Count
@@ -235,6 +257,7 @@ Expect-Error { Run $uncertainState Execute } 'Uncertain Save'
 $report=Read-Latest $uncertainState
 Assert ($report.status -eq 'failed' -and $report.projects[0].status -eq 'uncertain' -and $report.projects[1].status -eq 'checked') 'Uncertain save reported as complete or continued'
 Assert (-not @(Events | Select-Object -Skip $count | Where-Object { $_ -match '^SET Two ' }).Count) 'Queue continued after uncertain Save'
+Assert ((Get-Content $report.progress_log -Raw) -match 'Outcome is uncertain; inspect settings before resuming') 'Log hid an uncertain Save'
 $passed++
 Remove-Item (Join-Path $runnerDir 'uncertain-save')
 $saves=@(Events | Where-Object { $_ -eq 'SAVE One On' }).Count
@@ -489,5 +512,23 @@ Expect-Error { Select-KahuaFlagProject -Environment DEVPRODUCTION -Domain Onindu
 Assert (-not (Get-SearchFixture).picked) 'Incomplete search result list was selected'
 $passed++
 Remove-Module $searchHarness
+
+# Logging remains readable for literal Unicode names, flushes every event for
+# live readers, and emits a bounded heartbeat rather than a line per UI poll.
+$logContext=New-KahuaFlagLogContext -Mode Check
+$logContext.Path=Join-Path $testRoot 'logger.log'
+$logContext.Phase='Preflight'; $logContext.Index=1; $logContext.Total=1; $logContext.Project=$unicodeName
+$loggerOutput=@(Write-KahuaFlagProgress $logContext 'search-results' "First line`nsecond line" 6> (Join-Path $testRoot 'logger-console.log'))
+Assert ($loggerOutput.Count -eq 0) 'Logger returned a receipt-like success value'
+$lines=@(Get-Content $logContext.Path -Encoding UTF8)
+Assert ($lines.Count -eq 1 -and $lines[0].Contains($unicodeName) -and $lines[0].Contains('First line second line')) 'Log corrupted a Unicode name or split one event over lines'
+$passed++
+Write-KahuaFlagProgress $logContext 'search-results' 'Still waiting for exact match.' -Heartbeat
+Assert (@(Get-Content $logContext.Path).Count -eq 1) 'Heartbeat flooded the log immediately after a step message'
+Start-Sleep -Milliseconds 5100
+Write-KahuaFlagProgress $logContext 'search-results' 'Still waiting for exact match.' -Heartbeat
+Write-KahuaFlagProgress $logContext 'search-results' 'Still waiting for exact match.' -Heartbeat
+Assert (@(Get-Content $logContext.Path).Count -eq 2) 'Heartbeat was missing after the interval or repeated without delay'
+$passed++
 
 Write-Output "PASS: $passed project flag scenarios (simulated desktop). Fixtures: $testRoot"

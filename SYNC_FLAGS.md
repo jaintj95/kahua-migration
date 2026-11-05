@@ -27,6 +27,9 @@ it is still selected for sync: Kahua can propagate local deletions to the server
   The environment is always checked. Use one domain per batch.
 - Keep one Kahua window open, maximized and unlocked, and reserve the desktop
   while the runner works. Close existing dialogs and unsaved settings.
+  Expand the remote desktop window too: Kahua's blue header must show the
+  selected project name. A narrow viewport can hide that control and cause
+  the identity check to time out. Do not resize the session during a run.
 - Under **My settings > General**, enable **Show Project Number**. The CSV
   still needs only project names. The runner derives the displayed number to
   distinguish the complete project name from a similar name or numeric prefix.
@@ -39,6 +42,8 @@ it is still selected for sync: Kahua can propagate local deletions to the server
 - Keep all four runtime files together: `Invoke-KahuaSyncFlags.ps1`,
   `KahuaSyncFlags.psm1`, `KahuaSyncFlagDesktop.psm1`, and `KahuaDesktop.psm1`.
   No Python, Playwright, ZIP, project UID, or source-file manifest is needed.
+  After updating these files, open a fresh PowerShell session before running
+  them so a previously imported helper cannot remain cached in memory.
 
 ## CSV
 
@@ -125,6 +130,34 @@ For a `sync_enabled` CSV, use `-Action FromCsv`. Plan is the default mode when
 
 ## Results and recovery
 
+The console prints timestamped progress with elapsed time, mode, phase,
+project name, queue position, and the current step. For example:
+
+```text
+[+4.8s] [INFO] [Check/Preflight 1/5 | 220 - Seattle Heights] project-open: Opening ...
+[+18.2s] [INFO] [Check/Preflight 1/5 | 220 - Seattle Heights] checked: Folders=On; account sync=running; reopened=True.
+```
+
+Each attempt also writes a flushed UTF-8 `progress.log` beside `result.json`.
+Its path is printed near startup. Search, domain-switch, picker-close and Save
+polling loops report that they are still waiting about every five seconds.
+Other desktop calls print their step before entering the call; a blocked UI
+Automation call cannot emit a heartbeat while it is blocked. A waiting message
+is evidence that polling continued, not proof that file transfers are healthy.
+
+To follow an existing attempt in a second PowerShell window, paste its printed
+path and run:
+
+```powershell
+Get-Content -LiteralPath 'C:\Migration\runs\enable-20261104\attempts\<attempt>\progress.log' -Tail 30 -Wait -Encoding UTF8
+```
+
+Press Ctrl+C in that second window to stop following the log. Each retry gets
+a new attempt folder, so use the new log path. Validation failures before a
+safe state directory and exclusive lock are established appear on the console
+only. Failures later in a run record `failed_step`, `failed_phase`, the project,
+and a stack trace in `result.json`, with a final `STOPPED` line in the log.
+
 Each attempt writes `StateRoot\attempts\<attempt>\result.json`, including the
 requested value, exact project identity, reopened flag readback, account sync
 state, and derived local directory. `binding.json` binds the state directory to
@@ -158,16 +191,21 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
 ## Validation and current limits
 
 - Doe's five-row CSV passed Plan for both Enable and Disable.
-- The suite passes 50 scenarios under local PowerShell 7.6.9 and Windows
+- The suite passes 55 scenarios under local PowerShell 7.6.9 and Windows
   PowerShell 5.1, covering input validation, strict boolean
   handling, exact-name matching, preflight, reruns, Disable, uncertain saves,
   mismatched receipts, state locking, partial selections, paused accounts, and
   the real setter's Save/readback decisions, asynchronous search refresh, and
   refusal of ambiguous or incomplete search results, transient disabled
   controls during Save, unsettled saves, and late unsaved-change warnings.
+  Logging checks cover console/file output, failure context, preserved prior
+  logs, Unicode names, and rate-limited wait messages. A separate suite passes
+  16 geometry/read scenarios covering incomplete rectangles, expired controls,
+  fresh breadcrumb lookup, temporarily absent breadcrumbs, deadline handling,
+  and unrelated errors.
   These fixtures use a simulated desktop; live observations are recorded
   separately below.
-- All 12 PowerShell source/test files parse locally. The Windows PowerShell 5.1
+- All 13 PowerShell source/test files parse locally. The Windows PowerShell 5.1
   CI workflow runs the flag suite alongside the existing copy, batch, and
   coordinator fixtures. See [Windows fixture runs](https://github.com/jaintj95/kahua-migration/actions/workflows/windows-local-sync.yml)
   for the result at a particular published commit.
@@ -186,6 +224,19 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
   Seattle On; Warehouse, Bellevue, 123Test and 456 Off. Every receipt confirmed
   a reopened read. No migration worker remained running, and the remote
   connection was released after saving the handover record.
+- **Later debugging Check passed at 18:36:52 IST on November 5**, attempt
+  `20261105T130539Z-12534cb0`, in 73.5 seconds. All five projects were Off,
+  including Seattle, and all receipts confirmed reopened reads. This is the
+  latest observed state; the earlier On receipt remains historical. This
+  debugging session ran Plan/Check only and did not change project switches.
+  The initial run had already failed with a missing `Width` property. Recovery
+  also exposed expired and temporarily absent breadcrumbs and a project header
+  hidden by a narrow remote viewport. The corrected reader and expanded window
+  completed the five-project Check with exit code 0. The six deployed source
+  and test files matched local SHA-256 hashes, and no worker remained active.
+  The VM record is `Documents\KahuaDebug-20261105\debug-handoff-20261105.json`;
+  the corrected CSV and original failed reports remain available there and
+  in their respective run directories.
 - Earlier failed attempts remain recorded. The first Disable stopped during
   close with an Unsaved Changes Alert even though Off persisted. The first
   Enable stopped because the Save waiter rejected a temporarily disabled
@@ -200,14 +251,19 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
   when the UI does not provide enough evidence.
 - Live writes were tested on Seattle only. Five successful project lookups do
   not establish unattended operation or 100-200-project capacity.
-- The shared desktop helper still has unresolved startup rectangle-read errors
-  (`Width` and `IsEmpty`) from earlier supervised sessions. They stop the
-  operation; the new flag runner does not claim to fix them.
+- The shared helper now reads complete rectangles through the UI Automation
+  property method, retries missing data briefly, and preserves provider errors.
+  Breadcrumb reads reacquire controls after a transient expired-element error
+  and wait briefly when navigation temporarily removes the breadcrumb.
+  These address the observed automation failures (`Width`, `IsEmpty`, and stale
+  breadcrumb enumeration); they do not establish that Kahua's underlying sync
+  or all desktop layouts are reliable. Persistent failures still stop the run.
 
 Run fixtures without Kahua access:
 
 ```powershell
 .\scripts\windows-local-sync\Test-KahuaSyncFlags.ps1
+.\scripts\windows-local-sync\Test-KahuaDesktopGeometry.ps1
 ```
 
 The historical [Windows handover](KAHUA_WINDOWS_HANDOVER.md) records known

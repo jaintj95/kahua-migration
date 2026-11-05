@@ -47,3 +47,5 @@ jobs:
         run: .\Test-KahuaSyncCoordinator.ps1
       - name: Check project sync flags with simulated Kahua
         run: .\Test-KahuaSyncFlags.ps1
+      - name: Check desktop geometry recovery with simulated controls
+        run: .\Test-KahuaDesktopGeometry.ps1

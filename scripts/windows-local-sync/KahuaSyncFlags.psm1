@@ -3,6 +3,46 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function New-KahuaFlagLogContext {
+    param([string]$Mode)
+    # Pass the context explicitly so nested module imports and subsequent runs
+    # cannot accidentally reuse a previous attempt's file or project identity.
+    return @{
+        Path=''; Mode=$Mode; Phase='Startup'; Index=0; Total=0; Project=''; Step='startup'
+        Watch=[Diagnostics.Stopwatch]::StartNew()
+        SinceMessage=[Diagnostics.Stopwatch]::StartNew()
+        LastProgressAtUtc=''
+        Pending=(New-Object 'System.Collections.Generic.List[string]')
+    }
+}
+
+function Write-KahuaFlagProgress {
+    param([hashtable]$Context, [string]$Step, [string]$Message,
+        [ValidateSet('INFO','WARN','ERROR')][string]$Level='INFO', [switch]$Heartbeat)
+    if ($null -eq $Context) { return }
+    # Polling remains on the UI thread; a wait message means a fresh polling
+    # iteration occurred, not that a background timer thinks Kahua is healthy.
+    if ($Heartbeat -and $Context.SinceMessage.Elapsed.TotalSeconds -lt 5) { return }
+    if ($Step) { $Context.Step=$Step }
+    $Context.LastProgressAtUtc=[DateTime]::UtcNow.ToString('o')
+    $scope="$($Context.Mode)/$($Context.Phase)"
+    if ($Context.Index -gt 0) { $scope+=" $($Context.Index)/$($Context.Total) | $($Context.Project)" }
+    $messageLine=$Message -replace '[\r\n]+',' '
+    $line=('{0} [+{1:0.0}s] [{2}] [{3}] {4}: {5}' -f
+        [DateTimeOffset]::Now.ToString('yyyy-MM-dd HH:mm:ss zzz'),$Context.Watch.Elapsed.TotalSeconds,
+        $Level,$scope,$Context.Step,$messageLine)
+    if ($Context.Path) {
+        # Append/close on every event so another PowerShell window can tail it.
+        # Persist before the next UI action; a failed log write stops the run.
+        $pendingText=if ($Context.Pending.Count) { ($Context.Pending -join [Environment]::NewLine)+[Environment]::NewLine } else { '' }
+        [IO.File]::AppendAllText($Context.Path,$pendingText+$line+[Environment]::NewLine,[Text.UTF8Encoding]::new($false))
+        $Context.Pending.Clear()
+    } else { $Context.Pending.Add($line) }
+    # Never put diagnostic strings on the success stream used for receipts.
+    Write-Host $line
+    $Context.SinceMessage.Restart()
+}
+
 function Read-KahuaSyncFlagCsv {
     param([string]$CsvPath, [string]$Environment, [string]$Domain,
         [ValidateSet('Enable','Disable','FromCsv')][string]$Action = 'FromCsv')

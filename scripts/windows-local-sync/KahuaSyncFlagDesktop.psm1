@@ -19,19 +19,29 @@ function Assert-KahuaFlagEnvironment {
 }
 
 function Get-KahuaFlagBreadcrumbDomain {
-    $window = Get-KahuaWindow
-    $home = Find-KahuaControl -Id HomeButton -Name Home -Type Button -Root $window
-    $content = Find-KahuaControl -Id ShellContentFrame -Root $window
-    $top = $home.Current.BoundingRectangle.Bottom
-    $bottom = $content.Current.BoundingRectangle.Top
-    $crumbs = @(Find-KahuaControl -Type Button -Root $window -All | Where-Object {
-        $_.Current.Name.StartsWith('Open project descendants for ',[StringComparison]::Ordinal) -and
-        $_.Current.BoundingRectangle.Top -ge $top -and $_.Current.BoundingRectangle.Bottom -le $bottom
-    } | Sort-Object { $_.Current.BoundingRectangle.Left })
-    if (-not $crumbs.Count) { throw 'Enable My settings > General > Enable Full Navigation Breadcrumb so the selected domain can be verified.' }
-    $name = $crumbs[0].Current.Name.Substring('Open project descendants for '.Length)
-    if ([string]::IsNullOrWhiteSpace($name)) { throw 'The domain breadcrumb is unreadable.' }
-    return $name
+    # Navigation can invalidate a descendant while FindAll is walking the
+    # window. Retry this entire read with fresh elements, never the click.
+    Invoke-KahuaReadRetry -RequireResult -UnavailableMessage 'The domain breadcrumb did not become readable. Keep the desktop maximized and enable My settings > General > Enable Full Navigation Breadcrumb.' -Read {
+        $window = Get-KahuaWindow
+        $homeButton = Find-KahuaControl -Id HomeButton -Name Home -Type Button -Root $window
+        $content = Find-KahuaControl -Id ShellContentFrame -Root $window
+        $top = (Get-KahuaControlRectangle $homeButton).Bottom
+        $bottom = (Get-KahuaControlRectangle $content).Top
+        $crumbs = @(Find-KahuaControl -Type Button -Root $window -All | ForEach-Object {
+            $controlName=Get-KahuaControlName $_
+            if (-not $controlName.StartsWith('Open project descendants for ',[StringComparison]::Ordinal)) { return }
+            $r=Get-KahuaControlRectangle $_
+            if ($r.Top -ge $top -and $r.Bottom -le $bottom) {
+                [pscustomobject]@{name=$controlName;left=$r.Left}
+            }
+        } | Sort-Object left)
+        # Navigation can briefly expose no breadcrumb while rebuilding it.
+        # An empty read must not become an immediate configuration error.
+        if (-not $crumbs.Count) { return }
+        $name = $crumbs[0].name.Substring('Open project descendants for '.Length)
+        if ([string]::IsNullOrWhiteSpace($name)) { return }
+        return $name
+    }
 }
 
 function Confirm-KahuaFlagDomain {
@@ -44,11 +54,11 @@ function Confirm-KahuaFlagDomain {
 function Get-KahuaFlagHomeDomain {
     $root = Wait-KahuaControl -Id ShellContentFrame -Name 'Home Dashboard Main Content' -Type Group
     $help = Wait-KahuaControl -Id HelpCenterButton -Type Button -Root $root
-    $bounds = $help.Current.BoundingRectangle
+    $bounds = Get-KahuaControlRectangle $help
     # The current domain heading is the unique text on the Help Center row,
     # inside the home content. Exclude the separate project breadcrumb above it.
     $labels = @(Find-KahuaControl -Type Text -Root $root -All | Where-Object {
-        $r=$_.Current.BoundingRectangle
+        $r=Get-KahuaControlRectangle $_
         -not [string]::IsNullOrWhiteSpace($_.Current.Name) -and $r.Right -le $bounds.Left -and
             $r.Top -lt $bounds.Bottom -and $r.Bottom -gt $bounds.Top
     })
@@ -57,13 +67,16 @@ function Get-KahuaFlagHomeDomain {
 }
 
 function Initialize-KahuaFlagDomain {
-    param([string]$Environment,[string]$Domain,[switch]$Switch)
+    param([string]$Environment,[string]$Domain,[switch]$Switch,[hashtable]$LogContext)
+    Write-KahuaFlagProgress $LogContext 'environment' "Checking the Kahua window and exact environment '$Environment'."
     Assert-KahuaFlagEnvironment -Environment $Environment
     if (@(Find-KahuaControl -Id CloseModal -Type Button -All).Count) { throw 'Close the existing Kahua dialog before domain selection.' }
+    Write-KahuaFlagProgress $LogContext 'domain-home' 'Opening Home to read the selected domain.'
     Invoke-KahuaControl (Find-KahuaControl -Id HomeButton -Name Home -Type Button)
     $actual = Get-KahuaFlagHomeDomain
     if ($Switch -and $actual -cne $Domain) {
         if ([string]::IsNullOrWhiteSpace($Domain)) { throw 'An exact CSV domain is required for automatic domain selection.' }
+        Write-KahuaFlagProgress $LogContext 'domain-switch' "Selecting CSV domain '$Domain' from '$actual'."
         $root = Find-KahuaControl -Id ShellContentFrame -Name 'Home Dashboard Main Content' -Type Group
         $change = @(Find-KahuaControl -Name 'Change Domain' -Type Button -Root $root -All)
         if ($change.Count -ne 1) { throw "The home page does not offer Change Domain for '$Domain'. Check this account's domain access." }
@@ -75,6 +88,7 @@ function Initialize-KahuaFlagDomain {
             $actual = Get-KahuaFlagHomeDomain
             if ($actual -ceq $Domain) { break }
             if ([DateTime]::UtcNow -ge $deadline) { throw 'The requested domain did not become selected.' }
+            Write-KahuaFlagProgress $LogContext 'domain-switch' "Still waiting for domain '$Domain'; current='$actual'." -Heartbeat
             Start-Sleep -Milliseconds 250
         } while ($true)
     }
@@ -121,7 +135,8 @@ function Get-KahuaSearchProjectRows {
 }
 
 function Select-KahuaFlagProject {
-    param([string]$Environment,[string]$Domain,[string]$Name)
+    param([string]$Environment,[string]$Domain,[string]$Name,[hashtable]$LogContext)
+    Write-KahuaFlagProgress $LogContext 'project-home' 'Verifying the domain and returning to Home for project search.'
     Confirm-KahuaFlagDomain -Environment $Environment -Domain $Domain
     if (@(Find-KahuaControl -Id CloseModal -Type Button -All).Count) { throw 'Close the existing Kahua dialog before project search.' }
     # The selected-project header can collapse so far that its picker opens
@@ -132,8 +147,10 @@ function Select-KahuaFlagProject {
     $selectors = @(Find-KahuaControl -Id Shell_HomePartitionSelector -Name 'Select a Project' -Type Button -All)
     if ($selectors.Count -ne 1) { throw 'Cannot uniquely identify the project search control.' }
     Invoke-KahuaControl $selectors[0]
+    Write-KahuaFlagProgress $LogContext 'search' "Entering exact project name '$Name'."
     $search = Wait-KahuaControl -Id SearchBox -Type Edit
     Set-KahuaValue $search $Name
+    Write-KahuaFlagProgress $LogContext 'search-results' 'Waiting for one exact match and a complete, stable result list (up to 30s).'
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     $previous = ''; $stableSince = [DateTime]::UtcNow
     do {
@@ -154,15 +171,18 @@ function Select-KahuaFlagProject {
             break
         }
         if ([DateTime]::UtcNow -ge $deadline) { throw "No unique, stable project search result for exact name '$Name'. Enable My settings > General > Show Project Number; verify the exact name and access." }
+        Write-KahuaFlagProgress $LogContext 'search-results' "Still waiting: $($results.Count) visible row(s), $($candidates.Count) exact match(es), complete=$($snapshot.complete). $($snapshot.reason)" -Heartbeat
         Start-Sleep -Milliseconds 250
     } while ($true)
     $chosen = $candidates[0]
+    Write-KahuaFlagProgress $LogContext 'project-open' "Opening '$($chosen.identity.display)' and verifying its header."
     Invoke-KahuaControl $chosen.control -Click
     $display = $chosen.identity.display
     [void](Wait-KahuaControl -Id Shell_PartitionSelector -Name "Current Project $display" -Type Button)
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
     while (@(Find-KahuaControl -Id SearchBox -Type Edit -All).Count) {
         if ([DateTime]::UtcNow -ge $deadline) { throw 'Project search did not close.' }
+        Write-KahuaFlagProgress $LogContext 'project-open' 'Still waiting for the project picker to close (up to 15s).' -Heartbeat
         Start-Sleep -Milliseconds 250
     }
     Confirm-KahuaFlagDomain -Environment $Environment -Domain $Domain
@@ -205,14 +225,17 @@ function Get-KahuaRootFlagToggle {
 }
 
 function Open-KahuaFlagSettings {
-    param($Identity)
+    param($Identity,[hashtable]$LogContext)
+    Write-KahuaFlagProgress $LogContext 'settings-open' 'Opening My settings > Local Files for the selected project.'
     Assert-KahuaFlagProject -Identity $Identity
     if (@(Find-KahuaControl -Id CloseModal -Type Button -All).Count) { throw 'Close the existing settings/dialog before continuing.' }
     Invoke-KahuaControl (Find-KahuaControl -Id Shell_Settings -Type Button)
     Invoke-KahuaControl (Wait-KahuaControl -Id TitleText -Name 'My settings' -Type Text) -Click
     Invoke-KahuaControl (Wait-KahuaControl -Id ButtonText -Name 'Local Files' -Type Text) -Click
+    Write-KahuaFlagProgress $LogContext 'account-state' 'Waiting for Local Files account status.'
     $state = Wait-KahuaLocalFilesState
     if ($state -eq 'unconfigured') { throw 'Enable Local Files for the account manually once, then rerun. The project flag runner never initializes or resets account sync.' }
+    Write-KahuaFlagProgress $LogContext 'settings-project' "Account sync=$state. Verifying the project shown in Local Files."
     $change = Wait-KahuaControl -Name Change -Type Button
     $container = $change; $matched = $false
     for ($level=0; $level -lt 4; $level++) {
@@ -233,7 +256,8 @@ function Assert-KahuaFlagNoUnsavedWarning {
 }
 
 function Wait-KahuaFlagSave {
-    param([string]$Desired, [int]$TimeoutSeconds = 30, [int]$SettledMilliseconds = 2000)
+    param([string]$Desired, [int]$TimeoutSeconds = 30, [int]$SettledMilliseconds = 2000,[hashtable]$LogContext)
+    Write-KahuaFlagProgress $LogContext 'save-wait' "Waiting for Save/Cancel/Close and Folders to settle (up to ${TimeoutSeconds}s)."
     # Save is disabled while the request is in flight as well as after it
     # finishes. One disabled sample is not evidence that closing is safe.
     $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -249,16 +273,22 @@ function Wait-KahuaFlagSave {
         }
         if ($null -ne $toggle -and -not $save.Current.IsEnabled -and -not $cancel.Current.IsEnabled -and $close.Current.IsEnabled) {
             if ($null -eq $quietSince) { $quietSince = $watch.ElapsedMilliseconds }
-            if ($watch.ElapsedMilliseconds - $quietSince -ge $SettledMilliseconds) { return }
+            if ($watch.ElapsedMilliseconds - $quietSince -ge $SettledMilliseconds) {
+                Write-KahuaFlagProgress $LogContext 'save-settled' 'Save controls settled; the saved switch still needs reopened verification.'
+                return
+            }
         } else { $quietSince = $null }
         if ($watch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
             throw 'Project sync Save did not settle. The result is uncertain; inspect the settings before resuming.'
         }
+        Write-KahuaFlagProgress $LogContext 'save-wait' "Still waiting: Save enabled=$($save.Current.IsEnabled); Cancel enabled=$($cancel.Current.IsEnabled); Folders available=$($null -ne $toggle)." -Heartbeat
         Start-Sleep -Milliseconds 250
     } while ($true)
 }
 
 function Close-KahuaFlagSettings {
+    param([hashtable]$LogContext)
+    Write-KahuaFlagProgress $LogContext 'settings-close' 'Closing settings and watching for an unsaved-changes warning.'
     Assert-KahuaFlagNoUnsavedWarning
     Invoke-KahuaControl (Find-KahuaControl -Id CloseModal -Type Button)
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
@@ -268,27 +298,31 @@ function Close-KahuaFlagSettings {
         Assert-KahuaFlagNoUnsavedWarning
         if (-not @(Find-KahuaControl -Id CloseModal -Type Button -All).Count) { return }
         if ([DateTime]::UtcNow -ge $deadline) { throw 'Settings did not close. Inspect the dialog before resuming.' }
+        Write-KahuaFlagProgress $LogContext 'settings-close' 'Still waiting for settings to close (up to 15s).' -Heartbeat
         Start-Sleep -Milliseconds 250
     } while ($true)
 }
 
 function Read-KahuaFlagSelection {
-    param($Identity)
-    $state = Open-KahuaFlagSettings -Identity $Identity
+    param($Identity,[hashtable]$LogContext)
+    $state = Open-KahuaFlagSettings -Identity $Identity -LogContext $LogContext
+    Write-KahuaFlagProgress $LogContext 'folders-read' 'Reading the Folders switch and local directory; checking for unsaved edits.'
     $save = Find-KahuaControl -Name Save -Type Button
     if ($save.Current.IsEnabled) { throw 'Local Files has unsaved edits. Resolve them manually before running.' }
     $selection = (Get-KahuaRootFlagToggle).Current.ToggleState.ToString()
     $paths = @(Find-KahuaControl -Type Button -All | Where-Object { $_.Current.Name -match '^[A-Za-z]:\\' })
     if ($paths.Count -ne 1) { throw 'Cannot read the Local Files base directory.' }
     $syncRoot = Join-Path (Join-Path $paths[0].Current.Name ('Kahua - '+$Identity.domain)) $Identity.project_name
-    Close-KahuaFlagSettings
+    Write-KahuaFlagProgress $LogContext 'folders-read' "Observed Folders=$selection; account sync=$state; directory=$syncRoot."
+    Close-KahuaFlagSettings -LogContext $LogContext
     [pscustomobject]@{selection=$selection;account_sync_state=$state;sync_root=$syncRoot}
 }
 
 function Get-KahuaProjectFlag {
-    param($Identity)
-    [void](Read-KahuaFlagSelection -Identity $Identity)
-    $fresh = Read-KahuaFlagSelection -Identity $Identity
+    param($Identity,[hashtable]$LogContext)
+    [void](Read-KahuaFlagSelection -Identity $Identity -LogContext $LogContext)
+    Write-KahuaFlagProgress $LogContext 'reopen' 'Reopening settings for an independent read of the current switch.'
+    $fresh = Read-KahuaFlagSelection -Identity $Identity -LogContext $LogContext
     [pscustomobject]@{environment=$Identity.environment;domain=$Identity.domain;project_name=$Identity.project_name;
         project_number=$Identity.project_number;display=$Identity.display;scope='project-files';
         selection=$fresh.selection;account_sync_state=$fresh.account_sync_state;sync_root=$fresh.sync_root;
@@ -296,14 +330,17 @@ function Get-KahuaProjectFlag {
 }
 
 function Set-KahuaProjectFlag {
-    param($Identity,[Parameter(Mandatory=$true)][bool]$Enabled)
-    $state = Open-KahuaFlagSettings -Identity $Identity
+    param($Identity,[Parameter(Mandatory=$true)][bool]$Enabled,[hashtable]$LogContext)
+    $state = Open-KahuaFlagSettings -Identity $Identity -LogContext $LogContext
+    Write-KahuaFlagProgress $LogContext 'folders-current' 'Checking current switch, unsaved edits, and account status before changing anything.'
     $save = Find-KahuaControl -Name Save -Type Button
     if ($save.Current.IsEnabled) { throw 'Local Files has unsaved edits. Resolve them manually before running.' }
     if ($Enabled -and $state -eq 'paused') { throw 'Account sync is paused. Review and resume it manually before enabling project sync.' }
     $desired = if ($Enabled) { 'On' } else { 'Off' }
     $before = (Get-KahuaRootFlagToggle).Current.ToggleState.ToString()
     $changed = $before -cne $desired
+    if ($changed) { Write-KahuaFlagProgress $LogContext 'folders-set' "Changing Folders from $before to $desired." }
+    else { Write-KahuaFlagProgress $LogContext 'no-change' "Folders is already $desired. No toggle or Save needed; reopening will still verify it." }
     for ($step=0; $step -lt 3; $step++) {
         $toggle = Get-KahuaRootFlagToggle
         if ($toggle.Current.ToggleState.ToString() -ceq $desired) { break }
@@ -312,11 +349,13 @@ function Set-KahuaProjectFlag {
     }
     if ((Get-KahuaRootFlagToggle).Current.ToggleState.ToString() -cne $desired) { throw 'The project Folders switch did not reach the requested value. No Save was attempted.' }
     if ($changed) {
+        Write-KahuaFlagProgress $LogContext 'save' "Saving requested Folders=$desired."
         Invoke-KahuaControl (Wait-KahuaControl -Name Save -Type Button)
-        Wait-KahuaFlagSave -Desired $desired
+        Wait-KahuaFlagSave -Desired $desired -LogContext $LogContext
     }
-    Close-KahuaFlagSettings
-    $fresh = Read-KahuaFlagSelection -Identity $Identity
+    Close-KahuaFlagSettings -LogContext $LogContext
+    Write-KahuaFlagProgress $LogContext 'reopen' "Reopening settings to verify saved Folders=$desired."
+    $fresh = Read-KahuaFlagSelection -Identity $Identity -LogContext $LogContext
     if ($fresh.selection -cne $desired) { throw 'The saved project sync flag did not persist after reopening.' }
     [pscustomobject]@{environment=$Identity.environment;domain=$Identity.domain;project_name=$Identity.project_name;
         project_number=$Identity.project_number;display=$Identity.display;scope='project-files';
