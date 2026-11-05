@@ -353,7 +353,7 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
 
 ## Validation and current limits
 
-- **November 6 local project-open fix:** the supplied production Check log
+- **November 6 project-open recovery fix:** the supplied production Check log
   stopped at `project-open` when `KahuaDesktop.psm1`'s `FindAll` raised a wrapped
   `ElementNotAvailableException`. Build `30725ef` had Local Files recovery but
   did not cover this read. The local fix passes 22 navigation scenarios using
@@ -362,10 +362,14 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
   click. All 175 checks across seven platform-neutral suites pass on macOS
   PowerShell 7.6.9; all 19 PowerShell files parse. The guided launcher also
   verifies that `-RecoveryAttempts 0` reaches Check and both Execute selections.
-  The Windows workflow includes the new suite, but this fix has not been run
-  in Windows PowerShell 5.1 or against live Kahua. It has not been deployed
-  to the VM. The log does not establish why Kahua invalidated
-  the original element.
+  [Windows CI run 42094873358](https://github.com/jaintj95/kahua-migration/actions/runs/42094873358)
+  passed all **224 checks across ten suites** and parsed **19 scripts** in
+  Windows PowerShell `5.1.26100.33648` at commit `5c8bc8a`, including the new
+  navigation suite. Initial CI exposed two fixture assumptions about UIA
+  control-type values and default exception text; the fixture now uses numeric
+  control IDs and explicitly reproduces the supplied error message.
+  The recovery fix has not been deployed to the VM or checked against live
+  Kahua. The log does not establish why Kahua invalidated the original element.
 - The launcher/history suite passes 20 simulated scenarios on macOS PowerShell
   7.6.9 and Windows PowerShell 5.1, including
   automatic reuse, changed batches, preserved logs, legacy state, locks,
