@@ -115,7 +115,7 @@ try {
         $log.Index=$i+1; $log.Project=$row.project_name
         Write-KahuaFlagProgress $log 'project' 'Checking identity and current Folders switch before any changes.'
         $current.status = 'checking'; Save-FlagReport
-        $identity = Select-KahuaFlagProject -Environment $Environment -Domain $row.domain -Name $row.project_name -LogContext $log
+        $identity = Select-KahuaFlagProject -Environment $Environment -Domain $row.domain -Name $row.project_name -LogContext $log -RecoveryAttempts $RecoveryAttempts
         Write-KahuaFlagProgress $log 'read' 'Reading Local Files and reopening settings to confirm the current switch.'
         $receipt = Get-KahuaProjectFlag -Identity $identity -LogContext $log -RecoveryAttempts $RecoveryAttempts
         Assert-KahuaSyncFlagReceipt -Receipt $receipt -Row $row -RequireRunning:($Mode -eq 'Execute')
@@ -135,7 +135,7 @@ try {
             $current.status = 'applying'; Save-FlagReport
             # Re-resolve on every attempt; a previous receipt is never a reason
             # to skip a fresh UI read or to blindly invert the current switch.
-            $identity = Select-KahuaFlagProject -Environment $Environment -Domain $row.domain -Name $row.project_name -LogContext $log
+            $identity = Select-KahuaFlagProject -Environment $Environment -Domain $row.domain -Name $row.project_name -LogContext $log -RecoveryAttempts $RecoveryAttempts
             if ($identity.display -cne $identities[$row.row].display) { throw 'Project identity changed after preflight.' }
             Write-KahuaFlagProgress $log 'apply' "Setting Folders=$desired, then verifying after reopening settings."
             $receipt = Set-KahuaProjectFlag -Identity $identity -Enabled $row.sync_enabled -LogContext $log -RecoveryAttempts $RecoveryAttempts

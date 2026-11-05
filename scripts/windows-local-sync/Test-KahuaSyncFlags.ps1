@@ -26,8 +26,9 @@ function Initialize-KahuaFlagDomain {
     return $current
 }
 function Select-KahuaFlagProject {
-    param($Environment,$Domain,$Name)
+    param($Environment,$Domain,$Name,$LogContext,[int]$RecoveryAttempts=2)
     Add-Event "SELECT $Name"
+    Add-Event "NAV-RECOVERY $RecoveryAttempts"
     if ($Name -eq 'Missing') { throw 'Project not found' }
     if ($Name -eq 'Duplicate') { throw 'Duplicate exact project name' }
     [pscustomobject]@{environment=$Environment;domain=$Domain;project_name=$Name;display="0001 - $Name"}
@@ -450,19 +451,40 @@ Assert ((Get-SaveFixture).clicks -eq 1) 'Close warning was silently dismissed or
 $passed++
 Remove-Module $saveHarness
 
-$selector=$ast.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Select-KahuaFlagProject'},$true)
-$searchHarness=New-Module -Name KahuaFlagSearchFixture -ArgumentList $selector.Extent.Text -ScriptBlock {
+if (-not ('System.Windows.Automation.ElementNotAvailableException' -as [type])) {
+    Add-Type 'namespace System.Windows.Automation { public class ElementNotAvailableException : System.Exception { public ElementNotAvailableException() : base("Unrecognized error.") {} } }'
+}
+$selectorSource=@('Select-KahuaFlagProject','Wait-KahuaFlagProjectOpen') | ForEach-Object {
+    $name=$_
+    $ast.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true).Extent.Text
+}
+$searchHarness=New-Module -Name KahuaFlagSearchFixture -ArgumentList ($selectorSource -join "`n") -ScriptBlock {
     param($SelectorText)
     . ([scriptblock]::Create($SelectorText))
     function Reset-SearchFixture([string]$Mode) {
         $script:mode=$Mode; $script:reads=0; $script:picked=''; $script:query=''; $script:closed=$false
+        $script:projectClicks=0; $script:navigationReads=0
         $script:search=[pscustomobject]@{kind='search'}
         $script:picker=[pscustomobject]@{kind='picker'}
     }
     function Confirm-KahuaFlagDomain { param($Environment,$Domain) }
+    function Assert-KahuaFlagNoSyncError { }
+    function Get-KahuaActiveRoot {
+        $script:navigationReads++
+        [pscustomobject]@{generation=$script:navigationReads}
+    }
     function Find-KahuaControl {
-        param($Id,$Name,$Type,[switch]$All)
+        param($Id,$Name,$Type,$Root,[switch]$All)
         if ($Id -in @('HomeButton','Shell_HomePartitionSelector')) { return $script:picker }
+        if ($Root -and $Root.generation -eq 1 -and
+            (($script:mode -eq 'header-stale' -and $Id -eq 'Shell_PartitionSelector') -or
+            ($script:mode -eq 'picker-stale' -and $Id -eq 'SearchBox'))) {
+            throw [System.Windows.Automation.ElementNotAvailableException]::new()
+        }
+        if ($Id -eq 'Shell_PartitionSelector') {
+            if ($Name -cne ('Current Project '+$script:picked)) { throw 'Wrong header selection' }
+            return [pscustomobject]@{Current=[pscustomobject]@{IsEnabled=$true}}
+        }
         if ($Id -eq 'SearchBox' -and -not $script:closed) { return $script:search }
     }
     function Wait-KahuaControl {
@@ -476,7 +498,10 @@ $searchHarness=New-Module -Name KahuaFlagSearchFixture -ArgumentList $selector.E
     function Set-KahuaValue { param($Control,$Value) $script:query=$Value }
     function Invoke-KahuaControl {
         param($Control,[switch]$Click)
-        if ($Control.kind -eq 'result') { $script:picked=$Control.Current.Name; $script:closed=$true }
+        if ($Control.kind -eq 'result') {
+            $script:projectClicks++; $script:picked=$Control.Current.Name; $script:closed=$true
+            if ($script:mode -eq 'click-stale') { throw [System.Windows.Automation.ElementNotAvailableException]::new() }
+        }
     }
     function New-SearchResult([string]$Name,[int]$Id) {
         $item=[pscustomobject]@{kind='result';Current=[pscustomobject]@{Name=$Name};runtime=$Id}
@@ -494,7 +519,7 @@ $searchHarness=New-Module -Name KahuaFlagSearchFixture -ArgumentList $selector.E
         $complete=$script:mode -ne 'incomplete'
         [pscustomobject]@{rows=$rows;complete=$complete;reason=$(if ($complete) { '' } else { 'Incomplete result list' })}
     }
-    function Get-SearchFixture { [pscustomobject]@{picked=$script:picked;reads=$script:reads;query=$script:query} }
+    function Get-SearchFixture { [pscustomobject]@{picked=$script:picked;reads=$script:reads;query=$script:query;project_clicks=$script:projectClicks;navigation_reads=$script:navigationReads} }
     Export-ModuleMember -Function Select-KahuaFlagProject,Reset-SearchFixture,Get-SearchFixture
 }
 Import-Module $searchHarness -Force
@@ -511,6 +536,23 @@ $passed++
 Reset-SearchFixture incomplete
 Expect-Error { Select-KahuaFlagProject -Environment DEVPRODUCTION -Domain Onindus -Name One } 'Incomplete result list'
 Assert (-not (Get-SearchFixture).picked) 'Incomplete search result list was selected'
+$passed++
+foreach ($fault in @('header-stale','picker-stale')) {
+    Reset-SearchFixture $fault
+    $log=New-KahuaFlagLogContext Check
+    $identity=Select-KahuaFlagProject -Environment PRODUCTION -Domain Onindus -Name One -LogContext $log
+    $observed=Get-SearchFixture
+    Assert ($identity.display -ceq '0001 - One' -and $observed.project_clicks -eq 1 -and $observed.navigation_reads -eq 2) 'Project-open recovery clicked again or reused the expired root'
+    Assert ($log.Recoveries.Count -eq 1) 'Project-open recovery was absent from the report context'
+    $passed++
+}
+Reset-SearchFixture 'header-stale'
+Expect-Error { Select-KahuaFlagProject -Environment PRODUCTION -Domain Onindus -Name One -RecoveryAttempts 0 } 'Unrecognized error'
+Assert ((Get-SearchFixture).project_clicks -eq 1 -and (Get-SearchFixture).navigation_reads -eq 1) 'Disabled navigation recovery was ignored'
+$passed++
+Reset-SearchFixture 'click-stale'
+Expect-Error { Select-KahuaFlagProject -Environment PRODUCTION -Domain Onindus -Name One } 'Unrecognized error'
+Assert ((Get-SearchFixture).project_clicks -eq 1 -and (Get-SearchFixture).navigation_reads -eq 0) 'A possibly completed project click was retried'
 $passed++
 Remove-Module $searchHarness
 

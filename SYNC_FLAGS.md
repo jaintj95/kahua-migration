@@ -308,7 +308,17 @@ Existing waits and short read polling still apply. The runner does not restart
 Kahua or sign in automatically.
 
 Recovery retries fresh, read-only Local Files snapshots after expired UI
-elements or explicitly recognized read timeouts. After a transient Save/wait/
+elements or explicitly recognized read timeouts. It also covers the
+**project-open read after selecting a search result**: an
+`ElementNotAvailableException`, including one wrapped by a `FindAll` call,
+causes a fresh root, exact project header, and picker-closure read. The project
+click is sent once. The header must be enabled, the picker must be closed, and
+the environment/domain must match before continuing. One 45-second wait budget
+covers those observations and all retries; recovery does not restart the clock.
+An in-progress native UI call cannot be interrupted by this polling deadline.
+Earlier Home/search navigation is not automatically replayed if it fails.
+
+After a transient Save/wait/
 readback failure, it can recheck the exact project, wait for a recognized
 settings view to settle, close it, and reopen settings to verify the requested
 value. **It never repeats a toggle or Save during that recovery.** A reopened
@@ -343,6 +353,19 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
 
 ## Validation and current limits
 
+- **November 6 local project-open fix:** the supplied production Check log
+  stopped at `project-open` when `KahuaDesktop.psm1`'s `FindAll` raised a wrapped
+  `ElementNotAvailableException`. Build `30725ef` had Local Files recovery but
+  did not cover this read. The local fix passes 22 navigation scenarios using
+  the real control reader with a simulated provider, plus four full-selector
+  regressions for stale header/picker reads, disabled recovery and an uncertain
+  click. All 175 checks across seven platform-neutral suites pass on macOS
+  PowerShell 7.6.9; all 19 PowerShell files parse. The guided launcher also
+  verifies that `-RecoveryAttempts 0` reaches Check and both Execute selections.
+  The Windows workflow includes the new suite, but this fix has not been run
+  in Windows PowerShell 5.1 or against live Kahua. It has not been deployed
+  to the VM. The log does not establish why Kahua invalidated
+  the original element.
 - The launcher/history suite passes 20 simulated scenarios on macOS PowerShell
   7.6.9 and Windows PowerShell 5.1, including
   automatic reuse, changed batches, preserved logs, legacy state, locks,
@@ -355,8 +378,9 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
   passed all **198 checks across nine suites** and parsed all **18 PowerShell
   files** at implementation commit `c098bfe`, using Windows PowerShell
   `5.1.26100.33648`. Twelve PowerShell documentation examples also parsed locally.
-  The new launcher/recovery behavior has not been exercised against live Kahua
-  or deployed to the supervised VM. Hosted CI uses simulated controls and does
+  Archive `30725ef` was extracted on the supervised VM on November 6 and the
+  launcher reached its CSV prompt. A completed live Check/Execute of that
+  version has not been verified. Hosted CI uses simulated controls and does
   not validate the client's actual UI selectors or repair its sync-name conflict.
 - Doe's five-row CSV passed Plan for both Enable and Disable.
 - The suite passes 55 scenarios under local PowerShell 7.6.9 and Windows

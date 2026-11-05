@@ -1,6 +1,6 @@
 # Kahua Windows automation handover and risk register
 
-Updated November 5, 2026: **supervised flag pilot passed; full file-migration Execute validation is incomplete**.
+Updated November 6, 2026: **supervised flag pilot passed; full file-migration Execute validation is incomplete**.
 
 **Overall remaining risk is High for unattended or 100–200-project operation.**
 Kahua File Manager has repeatedly failed during both manual and automated
@@ -32,8 +32,12 @@ option for legacy runs. Recognized temporary reads get bounded recovery;
 Save reconciliation never repeats a toggle or Save. Local simulated launcher
 and recovery checks pass, and [Windows CI](https://github.com/jaintj95/kahua-migration/actions/runs/42080880432)
 passed all 198 fixture checks and parsed 18 scripts at implementation commit
-`c098bfe`. The new behavior still needs live client validation and has not been
-deployed to the supervised VM. The production same-name sync conflict remains an
+`c098bfe`. Archive `30725ef` was extracted on the supervised VM on November 6
+and reached the CSV prompt; a completed live Check/Execute of that version has
+not been verified. A November 6 fix adds recovery for the project-open read
+that failed in the supplied production log. It passes 175 local simulated
+checks across seven suites and parsing of 19 PowerShell files; it has not been
+deployed or validated against the live Windows client. The production same-name sync conflict remains an
 application issue; automatic history does not resolve it. See
 [the current limits and recovery rules](SYNC_FLAGS.md#bounded-recovery).
 
@@ -376,6 +380,7 @@ still pending.
 | Initial post-reboot control read had no `Width` property; repeated during November 5 Warehouse Check | Both attempts stopped before file work. The helper now uses UI Automation's property method, requires a complete rectangle, and briefly retries missing data. It preserves expired-control errors for fresh read-only lookup; 16 geometry/read fixtures and the 18:36 five-project Check passed. Persistent failures still stop. | Medium supervised; High unattended; original startup timing is not fully reproduced |
 | November 4 pre-upgrade project-selection read had no `IsEmpty` property | The check stopped before selecting Seattle or changing sync. The shared complete-rectangle reader now covers this property as well as Width; incomplete/empty values are tested without invented coordinates. The original pre-upgrade startup sequence was not rerun. | Medium supervised; High unattended |
 | November 5 breadcrumb enumeration used expired controls, a null name, or a temporarily absent breadcrumb | Read-only retries failed after project navigation with `ElementNotAvailableException`, a null-valued method call, or a misleading disabled-breadcrumb message. Reads now reacquire the entire snapshot for up to three seconds, use the property method for names, and wait for a nonempty breadcrumb. Partial snapshots are discarded; clicks and Save are not retried. Regression cases and the 18:36 five-project Check pass. | Medium; persistent UI provider failures still stop the queue |
+| November 5 production project-open read was outside the new recovery boundary | User-supplied Check attempt `20261105T180725Z-a6883143` stopped at 23:37:34 IST in `PRODUCTION / TDOT.ECPCS`, after selecting the first of two projects (`0002 - DB2505 - I-24 at Epps Mill_Buchanan Road`). `KahuaDesktop.psm1:136` raised a wrapped `ElementNotAvailableException` from `FindAll`. This was preflight, before switch changes. Build `30725ef` still had the gap. The local November 6 fix reacquires the complete project-open read after recognized stale-element failures, obeys the configured recovery count and one 45-second wait budget, and never repeats the project click. Exact enabled header, closed picker and environment/domain checks remain mandatory. Twenty-two provider/navigation fixtures, four full-selector regressions and the broader 175-check local run pass. The application-side reason for invalidation remains unconfirmed. | Medium supervised; High unattended. Local automation fix only; Windows 5.1 and live Check remain unvalidated. Closure needs the same-input, same-state Check on the updated VM version, with recovery logs and all project receipts retained. |
 | No visible progress while Check navigated and read settings | Operators could not distinguish waiting, failure, and activity. Added timestamped console output and a flushed per-attempt UTF-8 `progress.log`, project counts, step names, polling messages and failure context. A blocked native UI call cannot emit a heartbeat while blocked. | Low for tested logging; Medium for diagnosing a blocked provider call |
 | Narrow remote viewport hid the selected-project header | A November 5 retry timed out although the header's exact identity remained in accessibility data with `IsOffscreen=True` and empty bounds. Expanding the remote window restored visible bounds. The guide requires both Kahua and the remote session to be large enough to show the project name. | Medium on untested layouts; identity checks deliberately stop |
 | Assumed Invoke and immediate child-control availability were sufficient | Filter/search/folder/download actions failed or lagged. Added verified clicks, popup closure checks, and waits for refreshed controls. | Medium |

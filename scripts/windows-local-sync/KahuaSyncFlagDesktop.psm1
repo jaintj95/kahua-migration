@@ -196,8 +196,39 @@ function Get-KahuaSearchProjectRows {
     return [pscustomobject]@{rows=@();complete=$false;reason='Project search has not exposed its result list.'}
 }
 
+function Wait-KahuaFlagProjectOpen {
+    param($Identity,[hashtable]$LogContext,[ValidateRange(0,3)][int]$RecoveryAttempts=2,
+        [ValidateRange(0,300)][int]$TimeoutSeconds=45)
+    # The project click has already been sent. Retry only the observations,
+    # acquiring a fresh root and controls each time. Keep one deadline across
+    # header loading, picker closure and all recovery attempts.
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    Invoke-KahuaFlagReadRecovery -RecoveryAttempts $RecoveryAttempts -LogContext $LogContext -Operation 'Verifying the opened project' -Read {
+        while ($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+            Assert-KahuaFlagNoSyncError
+            $root=Get-KahuaActiveRoot
+            $headers=@(Find-KahuaControl -Id Shell_PartitionSelector -Name "Current Project $($Identity.display)" -Type Button -Root $root -All)
+            if ($headers.Count -gt 1) { throw 'Ambiguous selected-project header; cannot verify the opened project.' }
+            $pickers=@(Find-KahuaControl -Id SearchBox -Type Edit -Root $root -All)
+            if ($pickers.Count -gt 1) { throw 'Ambiguous project search controls; cannot verify picker closure.' }
+            if ($watch.Elapsed.TotalSeconds -ge $TimeoutSeconds) { break }
+            if ($headers.Count -eq 1 -and $headers[0].Current.IsEnabled -and -not $pickers.Count) {
+                Confirm-KahuaFlagDomain -Environment $Identity.environment -Domain $Identity.domain
+                if ($watch.Elapsed.TotalSeconds -lt $TimeoutSeconds) { return }
+                break
+            }
+            Write-KahuaFlagProgress $LogContext 'project-open' "Still waiting for the exact project header and closed picker (up to ${TimeoutSeconds}s)." -Heartbeat
+            Start-Sleep -Milliseconds 250
+        }
+        # This is the overall navigation deadline, not a recoverable Local
+        # Files read timeout. Retrying it would restart a completed wait.
+        throw [TimeoutException]::new("Timed out verifying opened project '$($Identity.display)' and closed picker. No project click was repeated.")
+    }
+}
+
 function Select-KahuaFlagProject {
-    param([string]$Environment,[string]$Domain,[string]$Name,[hashtable]$LogContext)
+    param([string]$Environment,[string]$Domain,[string]$Name,[hashtable]$LogContext,
+        [ValidateRange(0,3)][int]$RecoveryAttempts=2)
     Write-KahuaFlagProgress $LogContext 'project-home' 'Verifying the domain and returning to Home for project search.'
     Confirm-KahuaFlagDomain -Environment $Environment -Domain $Domain
     if (@(Find-KahuaControl -Id CloseModal -Type Button -All).Count) { throw 'Close the existing Kahua dialog before project search.' }
@@ -240,16 +271,10 @@ function Select-KahuaFlagProject {
     Write-KahuaFlagProgress $LogContext 'project-open' "Opening '$($chosen.identity.display)' and verifying its header."
     Invoke-KahuaControl $chosen.control -Click
     $display = $chosen.identity.display
-    [void](Wait-KahuaControl -Id Shell_PartitionSelector -Name "Current Project $display" -Type Button)
-    $deadline = [DateTime]::UtcNow.AddSeconds(15)
-    while (@(Find-KahuaControl -Id SearchBox -Type Edit -All).Count) {
-        if ([DateTime]::UtcNow -ge $deadline) { throw 'Project search did not close.' }
-        Write-KahuaFlagProgress $LogContext 'project-open' 'Still waiting for the project picker to close (up to 15s).' -Heartbeat
-        Start-Sleep -Milliseconds 250
-    }
-    Confirm-KahuaFlagDomain -Environment $Environment -Domain $Domain
-    [pscustomobject]@{environment=$Environment;domain=$Domain;project_name=$Name;
+    $identity=[pscustomobject]@{environment=$Environment;domain=$Domain;project_name=$Name;
         project_number=$chosen.identity.project_number;display=$display}
+    Wait-KahuaFlagProjectOpen -Identity $identity -LogContext $LogContext -RecoveryAttempts $RecoveryAttempts
+    return $identity
 }
 
 function Assert-KahuaFlagProject {

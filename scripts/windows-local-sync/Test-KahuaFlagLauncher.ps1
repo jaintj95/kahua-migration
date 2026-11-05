@@ -18,8 +18,9 @@ function Initialize-KahuaFlagDomain {
     return $Domain
 }
 function Select-KahuaFlagProject {
-    param($Environment,$Domain,$Name)
+    param($Environment,$Domain,$Name,$LogContext,[int]$RecoveryAttempts=2)
     Event "SELECT $Name"
+    Event "NAV-RECOVERY $RecoveryAttempts"
     if (Test-Path (Join-Path $PSScriptRoot 'fail-check')) { throw 'Fixture check failed' }
     [pscustomobject]@{environment=$Environment;domain=$Domain;project_name=$Name;display="0001 - $Name"}
 }
@@ -175,9 +176,11 @@ try {
     $passed++
     Answers @('APPLY')
     $start=@(Events).Count
-    & $launcher -CsvPath ('"'+$csv+'"') -Environment PRODUCTION -Action Enable -HistoryRoot $history | Out-Null
+    & $launcher -CsvPath ('"'+$csv+'"') -Environment PRODUCTION -Action Enable -HistoryRoot $history -RecoveryAttempts 0 | Out-Null
     Assert (@(Events | Select-Object -Skip $start | Where-Object { $_ -ceq 'SET One True' }).Count -eq 1) 'Approved launcher did not apply the reviewed project'
     Assert ((Latest $first).status -eq 'flags-verified') 'Launcher completion lacks verified result'
+    $navigationOptions=@(Events | Select-Object -Skip $start | Where-Object { $_ -match '^NAV-RECOVERY ' })
+    Assert ($navigationOptions.Count -eq 3 -and -not @($navigationOptions | Where-Object { $_ -cne 'NAV-RECOVERY 0' }).Count) 'Launcher recovery option was lost before Check, Execute preflight, or Execute selection'
     $passed++
     Answers @('APPLY')
     $global:KahuaLauncherFixture.ChangeAtApply=$true
