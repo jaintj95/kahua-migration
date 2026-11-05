@@ -343,15 +343,21 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
 
 ## Validation and current limits
 
-- The launcher/history suite passes 20 local simulated scenarios, including
+- The launcher/history suite passes 20 simulated scenarios on macOS PowerShell
+  7.6.9 and Windows PowerShell 5.1, including
   automatic reuse, changed batches, preserved logs, legacy state, locks,
   corrupt bindings, interactive prompts, refusal after a failed Check, and a
   CSV changed during the APPLY prompt and Unicode history across retries.
   The recovery suite passes 24 scenarios,
   including a Save that persisted before its UI read failed, bounded stale
   reads, disabled recovery, unconfirmed outcomes, identity changes, warnings,
-  and no repeated toggle/Save. These additions await Windows CI verification;
-  the new launcher/recovery behavior has not been exercised against live Kahua.
+  and no repeated toggle/Save. [Windows CI run 42080880432](https://github.com/jaintj95/kahua-migration/actions/runs/42080880432)
+  passed all **198 checks across nine suites** and parsed all **18 PowerShell
+  files** at implementation commit `c098bfe`, using Windows PowerShell
+  `5.1.26100.33648`. Twelve PowerShell documentation examples also parsed locally.
+  The new launcher/recovery behavior has not been exercised against live Kahua
+  or deployed to the supervised VM. Hosted CI uses simulated controls and does
+  not validate the client's actual UI selectors or repair its sync-name conflict.
 - Doe's five-row CSV passed Plan for both Enable and Disable.
 - The suite passes 55 scenarios under local PowerShell 7.6.9 and Windows
   PowerShell 5.1, covering input validation, strict boolean

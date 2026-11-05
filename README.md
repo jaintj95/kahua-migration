@@ -30,7 +30,9 @@ For production, use the [production commands and resume instructions](SYNC_FLAGS
 `Environment = 'PRODUCTION'` is required even without a visible client label;
 the runner verifies the registered production package. The guide distinguishes
 new batches from the VM's existing state, explains state-binding errors and
-same-name sync conflicts, and records the 154 passing Windows fixture checks.
+same-name sync conflicts, and records the 198 passing Windows fixture checks.
+The new guided launcher and bounded recovery have passed simulated tests on
+Windows PowerShell 5.1; live Kahua validation and VM deployment remain pending.
 The latest live production Check is blocked by Kahua's existing sync-name
 conflict; production Enable has not been validated.
 

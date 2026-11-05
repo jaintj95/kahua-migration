@@ -30,8 +30,10 @@ The guided `Start-SyncFlags.cmd` launcher now manages history automatically,
 checks the reviewed batch before APPLY, and retains the explicit `StateRoot`
 option for legacy runs. Recognized temporary reads get bounded recovery;
 Save reconciliation never repeats a toggle or Save. Local simulated launcher
-and recovery checks pass, but this new behavior still needs Windows CI and
-live client validation. The production same-name sync conflict remains an
+and recovery checks pass, and [Windows CI](https://github.com/jaintj95/kahua-migration/actions/runs/42080880432)
+passed all 198 fixture checks and parsed 18 scripts at implementation commit
+`c098bfe`. The new behavior still needs live client validation and has not been
+deployed to the supervised VM. The production same-name sync conflict remains an
 application issue; automatic history does not resolve it. See
 [the current limits and recovery rules](SYNC_FLAGS.md#bounded-recovery).
 
