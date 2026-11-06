@@ -396,8 +396,13 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
 
 ## Validation and current limits
 
-- The row-by-row runner passed **217 simulated checks across eight suites**
-  locally in macOS PowerShell 7.6.9. All 20 PowerShell files parsed. The
+- At commit `82cdd11`, the row-by-row runner passed **266 simulated checks
+  across 11 suites** on GitHub's Windows runner. Windows PowerShell
+  `5.1.26100.33648` parsed all 20 PowerShell files. The run included 78
+  project-flag scenarios and 20 launcher and history tests.
+  [Windows verification run 42251358038](https://github.com/jaintj95/kahua-migration/actions/runs/42251358038)
+- The local macOS PowerShell 7.6.9 run passed **217 simulated checks across
+  eight suites** and parsed the same 20 PowerShell files. The
   fixtures exercised changed and already-correct switches, a missing middle
   row, strict stopping before writes, reuse and refresh of a completed Check,
   changed project numbers, and interrupted Saves. They also exercised the

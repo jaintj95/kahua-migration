@@ -19,8 +19,8 @@ separate browser workflow. Running commands and recovery steps are in
 The newer [project flag runner](SYNC_FLAGS.md) has a narrower purpose: it sets
 the named project's own Folders switch, including whatever content Doe places
 in that directory. It verifies the setting, not completed transfers. It does
-not select parent or child projects. Its 55 simulated flag scenarios and 16
-geometry/read scenarios passed locally and in Windows PowerShell 5.1. After
+not select parent or child projects. The November 5 Windows validation record
+includes 55 simulated flag scenarios and 16 geometry/read scenarios. After
 the Cloud PC upgrade to 4 vCPUs / 16 GB,
 all five projects passed a live read-only Check, including nested projects.
 A separate test CSV corrected `222 - Bellevue Park` to Kahua's exact name
@@ -31,8 +31,9 @@ retains the explicit `StateRoot` option for legacy runs. In the
 row-by-row version, APPLY starts Execute after the operator reviews the plan.
 Execute skips confirmed missing names and reuses a completed Check for the
 same batch. Use `-CheckFirst -OnMissing Stop` to reject a batch with a
-missing name in its whole-list review. The runbook tracks validation of this
-version. [Row-by-row validation](SYNC_FLAGS.md#validation-and-current-limits)
+missing name in its whole-list review. The Windows verification run for
+`82cdd11` passed 266 simulated checks across 11 suites. Live Windows picker
+validation for this version remains pending. [Row-by-row validation](SYNC_FLAGS.md#validation-and-current-limits)
 
 On the earlier settings-context build, Windows CI passed all 247 fixture
 checks across eleven suites and parsed 20 scripts in
