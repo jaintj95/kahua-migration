@@ -140,13 +140,18 @@ function Resolve-KahuaProjectDisplay {
 }
 
 function Assert-KahuaSyncFlagReceipt {
-    param($Receipt, $Row, [switch]$RequireDesired, [switch]$RequireRunning)
+    param($Receipt, $Row, [switch]$Observation, [switch]$RequireDesired, [switch]$RequireRunning)
     foreach ($key in @('environment','domain','project_name','scope')) {
         if (-not $Receipt.PSObject.Properties[$key] -or $Receipt.$key -cne $Row.$key) {
             throw "Sync receipt does not match the requested $key."
         }
     }
-    if (-not $Receipt.PSObject.Properties['reopened'] -or $Receipt.reopened -isnot [bool] -or -not $Receipt.reopened) {
+    $resolved = Resolve-KahuaProjectDisplay -Display $Receipt.display -Name $Row.project_name
+    if (-not $resolved -or $resolved.project_number -cne $Receipt.project_number) {
+        throw 'Sync receipt has no matching numbered project identity.'
+    }
+    if (-not $Receipt.PSObject.Properties['reopened'] -or $Receipt.reopened -isnot [bool] -or
+        (-not $Observation -and -not $Receipt.reopened)) {
         throw 'Sync receipt must confirm a fresh read after reopening settings.'
     }
     if (-not $Receipt.PSObject.Properties['selection'] -or $Receipt.selection -cnotin @('On','Off','Indeterminate')) {
@@ -161,6 +166,52 @@ function Assert-KahuaSyncFlagReceipt {
     if ($RequireDesired) {
         $desired = if ($Row.sync_enabled) { 'On' } else { 'Off' }
         if ($Receipt.selection -cne $desired) { throw 'Saved project sync flag differs from the requested value.' }
+    }
+}
+
+function Get-KahuaCompletedFlagCheck {
+    param([string]$StateRoot,[object[]]$Rows,[string]$InputHash,[hashtable]$LogContext)
+    # The caller holds the batch lock and has verified binding.json and the
+    # selected domain. A new explicit Check always supersedes the older one,
+    # even if the operator interrupted it. Execute reports are never reviews.
+    $attempts = Get-ChildItem -LiteralPath (Join-Path $StateRoot 'attempts') -Directory |
+        Sort-Object CreationTimeUtc -Descending
+    foreach ($directory in $attempts) {
+        $path = Join-Path $directory.FullName 'check.json'
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { $path = Join-Path $directory.FullName 'result.json' }
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+        try {
+            $check = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($check.mode -cne 'Check') { continue }
+            if ($check.status -cnotin @('checked','checked-with-skips')) { return }
+            if ($check.schema -notin @(1,2) -or $check.attempt -cne $directory.Name -or
+                -not $check.finished_at_utc -or $check.projects.Count -ne $Rows.Count) {
+                throw 'The saved Check does not cover this batch.'
+            }
+            # The original schema-1 runner had no input_hash. Those Checks
+            # can be proven by the locked binding and every numbered receipt.
+            $legacy=$check.schema -eq 1
+            if ($check.PSObject.Properties['input_hash'] -or -not $legacy) {
+                if ($check.input_hash -cne $InputHash) { throw 'The saved Check input hash differs.' }
+            }
+            $skipped=0
+            for ($i=0; $i -lt $Rows.Count; $i++) {
+                $entry=$check.projects[$i]; $row=$Rows[$i]
+                if ($entry.row -ne $row.row -or $entry.domain -cne $row.domain -or
+                    $entry.project_name -cne $row.project_name -or $entry.desired_enabled -isnot [bool] -or
+                    $entry.desired_enabled -ne $row.sync_enabled) { throw 'The saved Check row does not match the input.' }
+                if (-not $legacy -and $entry.status -ceq 'skipped' -and $entry.reason -ceq 'missing-project' -and $null -eq $entry.receipt) {
+                    $skipped++
+                } elseif ($entry.status -ceq 'checked') {
+                    Assert-KahuaSyncFlagReceipt -Receipt $entry.receipt -Row $row -Observation:(-not $legacy)
+                } else { throw 'The saved Check contains an unfinished row.' }
+            }
+            if (($skipped -gt 0) -ne ($check.status -ceq 'checked-with-skips')) { throw 'Inconsistent saved Check totals.' }
+            return $check
+        } catch {
+            Write-KahuaFlagProgress $LogContext 'check-history' "Cannot reuse $path. $($_.Exception.Message) Fresh checks will be used." -Level WARN
+            return
+        }
     }
 }
 

@@ -160,13 +160,31 @@ function Initialize-KahuaFlagDomain {
 }
 
 function Get-KahuaSearchProjectRows {
-    param($Search)
+    param($Search,[string]$Query)
+    if ($Search.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value -cne $Query) {
+        throw 'The project search text changed during lookup.'
+    }
     $container = $Search
     for ($level=0; $level -lt 8; $level++) {
         $container = [Windows.Automation.TreeWalker]::RawViewWalker.GetParent($container)
-        if (-not $container) { break }
+        if (-not $container -or $container.Current.ControlType -eq [Windows.Automation.ControlType]::Window -or
+            $container.Current.AutomationId -ceq 'ShellContentFrame') { break }
         $lists = @(Find-KahuaControl -Type List -Root $container -All)
+        # SearchBox and Find a Project belong to the picker. Never use an
+        # empty-state label from the Home dashboard or another window.
+        $picker = @(Find-KahuaControl -Name 'Find a Project' -Type Button -Root $container -All).Count -eq 1
+        if (-not $picker -and -not $lists.Count) { continue }
+        if (@(Find-KahuaControl -Id HomeButton -Name Home -Type Button -Root $container -All).Count) { break }
         if ($lists.Count -gt 1) { throw 'Project search exposes multiple result lists.' }
+        if (@(Find-KahuaControl -Type ProgressBar -Root $container -All).Count) {
+            return [pscustomobject]@{rows=@();complete=$false;reason='Project search is loading.'}
+        }
+        $empty = $false
+        if ($picker) {
+            $empty = @(Find-KahuaControl -Type Text -Root $container -All | Where-Object {
+                (Get-KahuaControlName $_).TrimEnd('.') -in @('No results','No results found','No projects found','No matching projects found')
+            }).Count -eq 1
+        }
         if ($lists.Count -eq 1) {
             $list = $lists[0]
             # A virtualized or scrollable result list cannot prove uniqueness
@@ -188,9 +206,15 @@ function Get-KahuaSearchProjectRows {
             # search pagination is calibrated, conservatively reject this many
             # search rows too, even when no scrollbar is exposed.
             if ($rows.Count -ge 20) { $reason = 'Project search reached the conservative 20-result limit; use a more distinctive exact name.' }
-            return [pscustomobject]@{rows=$rows;complete=(-not $reason);reason=$reason}
+            if (-not $list.Current.IsEnabled) { $reason = 'Project search results are disabled.' }
+            if ($empty -and $rows.Count) { $reason = 'Search exposes both project rows and an empty-results message.' }
+            if ($rows.Count -or $empty -or $reason) {
+                return [pscustomobject]@{rows=$rows;complete=(-not $reason);reason=$reason}
+            }
         }
-        if ($container.Current.ControlType -eq [Windows.Automation.ControlType]::Window) { break }
+        if ($picker) {
+            return [pscustomobject]@{rows=@();complete=$empty;reason='Project picker has no populated result list.'}
+        }
     }
     # Search can briefly remove its old list while fetching new results.
     return [pscustomobject]@{rows=@();complete=$false;reason='Project search has not exposed its result list.'}
@@ -228,7 +252,7 @@ function Wait-KahuaFlagProjectOpen {
 
 function Select-KahuaFlagProject {
     param([string]$Environment,[string]$Domain,[string]$Name,[hashtable]$LogContext,
-        [ValidateRange(0,3)][int]$RecoveryAttempts=2)
+        [ValidateRange(0,3)][int]$RecoveryAttempts=2,[ValidateRange(1,300)][int]$SearchTimeoutSeconds=30)
     Write-KahuaFlagProgress $LogContext 'project-home' 'Verifying the domain and returning to Home for project search.'
     Confirm-KahuaFlagDomain -Environment $Environment -Domain $Domain
     if (@(Find-KahuaControl -Id CloseModal -Type Button -All).Count) { throw 'Close the existing Kahua dialog before project search.' }
@@ -243,30 +267,60 @@ function Select-KahuaFlagProject {
     Write-KahuaFlagProgress $LogContext 'search' "Entering exact project name '$Name'."
     $search = Wait-KahuaControl -Id SearchBox -Type Edit
     Set-KahuaValue $search $Name
-    Write-KahuaFlagProgress $LogContext 'search-results' 'Waiting for one exact match and a complete, stable result list (up to 30s).'
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    Write-KahuaFlagProgress $LogContext 'search-results' "Waiting for a complete, stable result for the requested name (up to ${SearchTimeoutSeconds}s)."
+    $deadline = [DateTime]::UtcNow.AddSeconds($SearchTimeoutSeconds)
     $previous = ''; $stableSince = [DateTime]::UtcNow
     do {
         $search = Wait-KahuaControl -Id SearchBox -Type Edit
-        $snapshot = Get-KahuaSearchProjectRows -Search $search
+        Assert-KahuaFlagNoSyncError
+        $snapshot = Get-KahuaSearchProjectRows -Search $search -Query $Name
         $results = @($snapshot.rows)
         $candidates = @()
+        $labels = @()
+        $filtered = $true
         foreach ($result in $results) {
-            $resolved = Resolve-KahuaProjectDisplay -Display $result.Current.Name -Name $Name
+            $label = Get-KahuaControlName $result
+            $labels += ($result.GetRuntimeId() -join ',') + ':' + $label
+            $resolved = Resolve-KahuaProjectDisplay -Display $label -Name $Name
             if ($resolved) { $candidates += [pscustomobject]@{control=$result;identity=$resolved} }
+            # Old recent-project rows can still be visible while the search
+            # runs. Bare labels also cannot establish a numbered project's absence.
+            if ($label -notmatch '^.+? - .+$' -or $label -ceq $Name -or
+                $label.IndexOf($Name,[StringComparison]::OrdinalIgnoreCase) -lt 0) { $filtered=$false }
         }
         if ($candidates.Count -gt 1) { throw "More than one project has the exact name '$Name'. No project was selected." }
-        $fingerprint = $snapshot.complete.ToString() + ':' + $snapshot.reason + ':' +
-            (($results | ForEach-Object { ($_.GetRuntimeId() -join ',') + ':' + $_.Current.Name }) -join '|')
+        $fingerprint = $snapshot.complete.ToString() + ':' + $snapshot.reason + ':' + ($labels -join '|')
         if ($fingerprint -cne $previous) { $previous=$fingerprint; $stableSince=[DateTime]::UtcNow }
-        if ($candidates.Count -eq 1 -and ([DateTime]::UtcNow-$stableSince).TotalSeconds -ge 1.5) {
-            if (-not $snapshot.complete) { throw $snapshot.reason }
-            break
+        if ([DateTime]::UtcNow -ge $deadline) { throw "No unique, stable project search result for exact name '$Name' ($($results.Count) rows, $($candidates.Count) exact). $($snapshot.reason) Verify the name, access, and My settings > General > Show Project Number." }
+        if (([DateTime]::UtcNow-$stableSince).TotalSeconds -ge 1.5) {
+            if ($candidates.Count -eq 1) {
+                if (-not $snapshot.complete) { throw $snapshot.reason }
+                break
+            }
+            if ($snapshot.complete -and $filtered) { break }
         }
-        if ([DateTime]::UtcNow -ge $deadline) { throw "No unique, stable project search result for exact name '$Name'. Enable My settings > General > Show Project Number; verify the exact name and access." }
         Write-KahuaFlagProgress $LogContext 'search-results' "Still waiting: $($results.Count) visible row(s), $($candidates.Count) exact match(es), complete=$($snapshot.complete). $($snapshot.reason)" -Heartbeat
         Start-Sleep -Milliseconds 250
     } while ($true)
+    if (-not $candidates.Count) {
+        # Leave Home ready for the next row. A failed dismissal or a warning
+        # is a desktop error, never a skippable missing name.
+        Confirm-KahuaFlagDomain -Environment $Environment -Domain $Domain
+        if (@(Find-KahuaControl -Id CloseModal -Type Button -All).Count) { throw 'Unexpected dialog in project search.' }
+        Write-KahuaFlagProgress $LogContext 'search-close' 'No exact match. Closing the picker and verifying Home.'
+        Invoke-KahuaControl (Find-KahuaControl -Id HomeButton -Name Home -Type Button)
+        $closeDeadline = [DateTime]::UtcNow.AddSeconds(15)
+        while (@(Find-KahuaControl -Id SearchBox -Type Edit -All).Count) {
+            if ([DateTime]::UtcNow -ge $closeDeadline) { throw 'The project search picker did not close.' }
+            Start-Sleep -Milliseconds 250
+        }
+        [void](Wait-KahuaControl -Id ShellContentFrame -Name 'Home Dashboard Main Content' -Type Group)
+        Assert-KahuaFlagNoSyncError
+        Confirm-KahuaFlagDomain -Environment $Environment -Domain $Domain
+        $missing=[InvalidOperationException]::new("No exact project named '$Name' in the completed search for domain '$Domain'.")
+        $missing.Data['KahuaFlagMissingProject']=$true
+        throw $missing
+    }
     $chosen = $candidates[0]
     Write-KahuaFlagProgress $LogContext 'project-open' "Opening '$($chosen.identity.display)' and verifying its header."
     Invoke-KahuaControl $chosen.control -Click
@@ -436,13 +490,11 @@ function Read-KahuaFlagSelection {
 
 function Get-KahuaProjectFlag {
     param($Identity,[hashtable]$LogContext,[ValidateRange(0,3)][int]$RecoveryAttempts=2)
-    [void](Read-KahuaFlagSelection -Identity $Identity -LogContext $LogContext -RecoveryAttempts $RecoveryAttempts)
-    Write-KahuaFlagProgress $LogContext 'reopen' 'Reopening settings for an independent read of the current switch.'
     $fresh = Read-KahuaFlagSelection -Identity $Identity -LogContext $LogContext -RecoveryAttempts $RecoveryAttempts
     [pscustomobject]@{environment=$Identity.environment;domain=$Identity.domain;project_name=$Identity.project_name;
         project_number=$Identity.project_number;display=$Identity.display;scope='project-files';
         selection=$fresh.selection;account_sync_state=$fresh.account_sync_state;sync_root=$fresh.sync_root;
-        reopened=$true;verified_at_utc=[DateTime]::UtcNow.ToString('o')}
+        reopened=$false;verified_at_utc=[DateTime]::UtcNow.ToString('o')}
 }
 
 function Confirm-KahuaFlagAfterSave {
@@ -467,13 +519,19 @@ function Confirm-KahuaFlagAfterSave {
 function Set-KahuaProjectFlag {
     param($Identity,[Parameter(Mandatory=$true)][bool]$Enabled,[hashtable]$LogContext,
         [ValidateRange(0,3)][int]$RecoveryAttempts=2)
-    $state = Open-KahuaFlagSettings -Identity $Identity -LogContext $LogContext -RecoveryAttempts $RecoveryAttempts
-    Write-KahuaFlagProgress $LogContext 'folders-current' 'Checking current switch, unsaved edits, and account status before changing anything.'
-    $save = Find-KahuaControl -Name Save -Type Button
-    if ($save.Current.IsEnabled) { throw 'Local Files has unsaved edits. Resolve them manually before running.' }
-    if ($Enabled -and $state -eq 'paused') { throw 'Account sync is paused. Review and resume it manually before enabling project sync.' }
+    try {
+        $state = Open-KahuaFlagSettings -Identity $Identity -LogContext $LogContext -RecoveryAttempts $RecoveryAttempts
+        Write-KahuaFlagProgress $LogContext 'folders-current' 'Checking current switch, unsaved edits, and account status before changing anything.'
+        $save = Find-KahuaControl -Name Save -Type Button
+        if ($save.Current.IsEnabled) { throw 'Local Files has unsaved edits. Resolve them manually before running.' }
+        if ($Enabled -and $state -ne 'running') { throw "Account sync is $state. Review and resume it manually before enabling project sync." }
+        $before = (Get-KahuaRootFlagToggle).Current.ToggleState.ToString()
+        if ($before -cnotin @('On','Off','Indeterminate')) { throw 'Unrecognized Folders selection before setting the flag.' }
+    } catch {
+        $_.Exception.Data['KahuaFlagBeforeWrite']=$true
+        throw
+    }
     $desired = if ($Enabled) { 'On' } else { 'Off' }
-    $before = (Get-KahuaRootFlagToggle).Current.ToggleState.ToString()
     $changed = $before -cne $desired
     if ($changed) { Write-KahuaFlagProgress $LogContext 'folders-set' "Changing Folders from $before to $desired." }
     else { Write-KahuaFlagProgress $LogContext 'no-change' "Folders is already $desired. No toggle or Save needed; reopening will still verify it." }

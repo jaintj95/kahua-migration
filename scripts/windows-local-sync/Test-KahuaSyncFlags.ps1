@@ -29,9 +29,15 @@ function Select-KahuaFlagProject {
     param($Environment,$Domain,$Name,$LogContext,[int]$RecoveryAttempts=2)
     Add-Event "SELECT $Name"
     Add-Event "NAV-RECOVERY $RecoveryAttempts"
-    if ($Name -eq 'Missing') { throw 'Project not found' }
+    if ($Name -eq 'Missing' -and -not (Test-Path (Join-Path $PSScriptRoot 'missing-now-exists'))) {
+        $failure=[InvalidOperationException]::new('No exact project named Missing')
+        $failure.Data['KahuaFlagMissingProject']=$true
+        throw $failure
+    }
     if ($Name -eq 'Duplicate') { throw 'Duplicate exact project name' }
-    [pscustomobject]@{environment=$Environment;domain=$Domain;project_name=$Name;display="0001 - $Name"}
+    if ($Name -eq 'Timeout') { throw 'Timed out waiting for results' }
+    $number=if (Test-Path (Join-Path $PSScriptRoot 'renumbered')) { '0002' } else { '0001' }
+    [pscustomobject]@{environment=$Environment;domain=$Domain;project_name=$Name;project_number=$number;display="$number - $Name"}
 }
 function Read-Selection($Identity) {
     $path=Join-Path $PSScriptRoot ($Identity.project_name+'.selection')
@@ -43,7 +49,8 @@ function New-Receipt($Identity,[string]$Selection) {
     if (Test-Path (Join-Path $PSScriptRoot 'bad-identity')) { $name='Wrong project' }
     $account=if (Test-Path (Join-Path $PSScriptRoot 'paused')) { 'paused' } else { 'running' }
     [pscustomobject]@{environment=$Identity.environment;domain=$Identity.domain;project_name=$name;
-        scope='project-files';selection=$Selection;reopened=$true;account_sync_state=$account}
+        project_number=$Identity.project_number;display=$Identity.display;
+        scope='project-files';selection=$Selection;reopened=$false;account_sync_state=$account}
 }
 function Get-KahuaProjectFlag {
     param($Identity)
@@ -54,14 +61,22 @@ function Set-KahuaProjectFlag {
     param($Identity,[bool]$Enabled)
     Add-Event "SET $($Identity.project_name) $Enabled"
     $desired=if ($Enabled) { 'On' } else { 'Off' }
-    if ((Read-Selection $Identity) -cne $desired) {
+    $receipt=New-Receipt $Identity $desired
+    if ($Enabled -and $receipt.account_sync_state -eq 'paused') {
+        $failure=[InvalidOperationException]::new('Account sync is paused')
+        $failure.Data['KahuaFlagBeforeWrite']=$true
+        throw $failure
+    }
+    $changed=(Read-Selection $Identity) -cne $desired
+    if ($changed) {
         [IO.File]::WriteAllText((Join-Path $PSScriptRoot ($Identity.project_name+'.selection')),$desired)
         Add-Event "SAVE $($Identity.project_name) $desired"
     }
     if (Test-Path (Join-Path $PSScriptRoot 'uncertain-save')) { throw 'Uncertain Save: readback unavailable' }
-    if (Test-Path (Join-Path $PSScriptRoot 'wrong-readback')) { return New-Receipt $Identity 'Indeterminate' }
-    $receipt=New-Receipt $Identity $desired
-    if (Test-Path (Join-Path $PSScriptRoot 'not-reopened')) { $receipt.reopened=$false }
+    Add-Event "REOPEN $($Identity.project_name)"
+    if (Test-Path (Join-Path $PSScriptRoot 'wrong-readback')) { $receipt.selection='Indeterminate' }
+    $receipt.reopened=-not (Test-Path (Join-Path $PSScriptRoot 'not-reopened'))
+    $receipt | Add-Member NoteProperty changed $changed
     return $receipt
 }
 Export-ModuleMember -Function Initialize-KahuaFlagDomain,Confirm-KahuaFlagDomain,Select-KahuaFlagProject,Get-KahuaProjectFlag,Set-KahuaProjectFlag
@@ -90,8 +105,8 @@ function Read-Latest([string]$State) {
     $path=Get-ChildItem (Join-Path $State 'attempts') -Directory | Sort-Object CreationTimeUtc -Descending | Select-Object -First 1
     Get-Content (Join-Path $path.FullName 'result.json') -Raw | ConvertFrom-Json
 }
-function Run([string]$State,[string]$Mode='Plan',[string]$Action='Enable') {
-    & $runner -CsvPath $csv -Environment DEVPRODUCTION -Action $Action -StateRoot $State -Mode $Mode | Out-Null
+function Run([string]$State,[string]$Mode='Plan',[string]$Action='Enable',[switch]$CheckFirst,[string]$OnMissing='Skip') {
+    & $runner -CsvPath $csv -Environment DEVPRODUCTION -Action $Action -StateRoot $State -Mode $Mode -CheckFirst:$CheckFirst -OnMissing $OnMissing | Out-Null
 }
 
 # Doe's file is accepted unchanged; opaque placeholder UIDs are not identity.
@@ -188,30 +203,30 @@ $checkLogPath=$checkReport.progress_log
 $checkLog=[IO.File]::ReadAllText($checkLogPath)
 Assert ($successOutput.Count -eq 1 -and $successOutput[0] -match '^checked:') 'Progress messages polluted the success output stream'
 Assert ($checkLog -match '\[Check/Preflight 1/2 \| One\]' -and $checkLog -match '\[Check/Preflight 2/2 \| Two\]') 'Live log omitted project names or queue positions'
-Assert ($checkLog -match 'checked: Folders=Off' -and $checkLog -match 'complete: checked: 2/2') 'Live log omitted the current selection or final summary'
+Assert ($checkLog -match 'checked: Folders=Off' -and $checkLog -match 'complete: checked: 2 checked, 0 skipped') 'Live log omitted the current selection or final summary'
 Assert ($checkLog -match '\[\+\d+\.\d+s\]' -and $checkLog -match '\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{2}:\d{2}') 'Live log omitted elapsed time or timestamp offset'
 # Windows PowerShell 5.1 formats redirected information records at the host
 # width. Ignore its inserted line breaks when checking the complete path.
 $consoleText=(Get-Content $consoleLog -Raw) -replace '[\r\n]',''
 Assert ($consoleText.Contains($checkLogPath)) 'Console did not show where its durable log was written'
 $passed++
+$start=@(Events).Count
 Run $state Execute
 $report=Read-Latest $state
 Assert ($report.status -eq 'flags-verified' -and -not $report.transfer_verified) 'Flag completion incorrectly claims file transfer'
 Assert (@($report.projects | Where-Object status -eq 'verified').Count -eq 2) 'Not all flags verified'
-$trace=@(Events)
-$firstSet=0
-while ($firstSet -lt $trace.Count -and $trace[$firstSet] -notmatch '^SET ') { $firstSet++ }
-Assert (@($trace[0..($firstSet-1)] | Where-Object { $_ -match '^READ ' }).Count -ge 2) 'Mutation began before all projects were checked'
+$trace=@(Events | Select-Object -Skip $start | Where-Object { $_ -match '^(SELECT|SET|READ|REOPEN) ' })
+Assert (($trace -join ',') -ceq 'SELECT One,SET One True,REOPEN One,SELECT Two,SET Two True,REOPEN Two') 'Execute repeated Check or failed to apply row by row'
+Assert ($report.check_attempt -ceq $checkReport.attempt -and $report.counts.changed -eq 2) 'Execute lost the source Check or changed count'
 $passed++
 Assert ([IO.File]::ReadAllText($checkLogPath) -ceq $checkLog) 'A subsequent attempt modified the previous progress log'
 Assert ((Read-Latest $state).progress_log -cne $checkLogPath) 'A subsequent attempt reused the previous log file'
 $passed++
 $saves=@(Events | Where-Object { $_ -match '^SAVE ' }).Count
-$reads=@(Events | Where-Object { $_ -match '^READ ' }).Count
+$reads=@(Events | Where-Object { $_ -match '^REOPEN ' }).Count
 Run $state Execute
 Assert (@(Events | Where-Object { $_ -match '^SAVE ' }).Count -eq $saves) 'Rerun inverted an already correct flag'
-Assert (@(Events | Where-Object { $_ -match '^READ ' }).Count -gt $reads) 'Rerun trusted old receipts'
+Assert (@(Events | Where-Object { $_ -match '^REOPEN ' }).Count -eq $reads+2 -and (Read-Latest $state).counts.already_correct -eq 2) 'Rerun trusted old receipts'
 $passed++
 Expect-Error { Run $state Execute Disable } 'different input values'
 $passed++
@@ -220,19 +235,123 @@ Run $offState Execute Disable
 Assert ((Read-Latest $offState).status -eq 'flags-verified' -and [IO.File]::ReadAllText((Join-Path $runnerDir 'One.selection')) -eq 'Off') 'Disable did not set false'
 $passed++
 
-foreach ($missing in @('Missing','Duplicate')) {
-    Write-CsvText "domain,project_name`nOnindus,One`nOnindus,$missing`n"
+foreach ($fault in @('Duplicate','Timeout')) {
+    Write-CsvText "domain,project_name`nOnindus,One`nOnindus,$fault`nOnindus,Two`n"
     $count=@(Events).Count
-    Expect-Error { Run (Join-Path $testRoot $missing) Execute } 'not found|Duplicate'
-    Assert (-not @(Events | Select-Object -Skip $count | Where-Object { $_ -match '^(SET|SAVE) ' }).Count) 'Failed lookup allowed partial batch mutation'
-    $failure=Read-Latest (Join-Path $testRoot $missing)
+    Expect-Error { Run (Join-Path $testRoot $fault) Execute } 'Duplicate|Timed out'
+    $failure=Read-Latest (Join-Path $testRoot $fault)
+    Assert ($failure.projects[0].status -eq 'verified' -and $failure.projects[1].status -eq 'failed' -and $failure.projects[2].status -eq 'planned') 'Unexpected row outcome after failed lookup'
     $failureLog=[IO.File]::ReadAllText($failure.progress_log)
-    Assert ($failure.failed_step -eq 'project' -and $failure.failed_phase -eq 'Preflight') 'Failed report lost the active step or phase'
-    Assert ($failureLog -match ('2/2 \| '+[regex]::Escape($missing)) -and $failureLog -match '\[ERROR\].*STOPPED:') 'Failure log omitted the failing row or error'
+    Assert ($failure.failed_step -eq 'project' -and $failure.failed_phase -eq 'Apply') 'Failed report lost the active step or phase'
+    Assert ($failureLog -match ('2/3 \| '+[regex]::Escape($fault)) -and $failureLog -match '\[ERROR\].*STOPPED:') 'Failure log omitted the failing row or error'
     Assert ($failureLog -notmatch 'complete:') 'A failed lookup was logged as complete'
 }
 $passed++
 $passed++ # Failed attempt progress remains useful without a success report.
+
+Write-CsvText "domain,project_name`nOnindus,One`nOnindus,Missing`nOnindus,Two`n"
+$mixed=Join-Path $testRoot 'mixed'
+$start=@(Events).Count
+Run $mixed Execute
+$trace=@(Events | Select-Object -Skip $start | Where-Object { $_ -match '^(SELECT|SET|REOPEN|READ) ' })
+Assert (($trace -join ',') -ceq 'SELECT One,SET One True,REOPEN One,SELECT Missing,SELECT Two,SET Two True,REOPEN Two') 'Fresh Execute did not finish each exact match in order'
+$report=Read-Latest $mixed
+Assert ($report.status -ceq 'completed-with-skips' -and $report.counts.verified -eq 2 -and $report.counts.skipped -eq 1) 'Partial match claimed full verification'
+Assert ($report.projects[1].row -eq 3 -and $report.projects[1].reason -ceq 'missing-project' -and $null -eq $report.projects[1].receipt) 'Missing row lacks evidence'
+$passed++
+
+$start=@(Events).Count
+Expect-Error { Run $mixed Execute -OnMissing Stop } 'row 3.*Missing'
+$trace=@(Events | Select-Object -Skip $start | Where-Object { $_ -match '^SELECT ' })
+Assert (($trace -join ',') -ceq 'SELECT One,SELECT Missing' -and (Read-Latest $mixed).projects[0].status -ceq 'verified') 'Row-by-row Stop crossed the missing row'
+$passed++
+
+$start=@(Events).Count
+Expect-Error { Run $mixed Execute -CheckFirst -OnMissing Stop } 'row 3.*Missing'
+Assert (-not @(Events | Select-Object -Skip $start | Where-Object { $_ -match '^SET ' }).Count) 'Whole-batch Stop reached the setter'
+$passed++
+
+$start=@(Events).Count
+Run $mixed Execute -CheckFirst
+$trace=@(Events | Select-Object -Skip $start | Where-Object { $_ -match '^(READ|SELECT|SET) ' })
+Assert (($trace -join ',') -ceq 'SELECT One,READ One,SELECT Missing,SELECT Two,READ Two,SELECT One,SET One True,SELECT Two,SET Two True') 'CheckFirst did not check the batch then apply only matches'
+$checkedAttempt=(Read-Latest $mixed).check_attempt
+$start=@(Events).Count
+Run $mixed Execute -CheckFirst
+$trace=@(Events | Select-Object -Skip $start | Where-Object { $_ -match '^(READ|SELECT) ' })
+Assert (($trace -join ',') -ceq 'SELECT One,SELECT Two' -and (Read-Latest $mixed).check_attempt -ceq $checkedAttempt) 'A completed CheckFirst pass was repeated'
+$passed++
+
+$start=@(Events).Count
+Expect-Error { Run $mixed Execute -CheckFirst -OnMissing Stop } 'no exact project.*Missing'
+Assert (-not @(Events | Select-Object -Skip $start | Where-Object { $_ -match '^(SELECT|SET) ' }).Count) 'A cached skipped row escaped strict whole-batch Stop'
+Run $mixed Check
+$checkReport=Read-Latest $mixed
+Assert ($checkReport.status -ceq 'checked-with-skips' -and $checkReport.counts.checked -eq 2) 'Read-only Check failed to record skips'
+$start=@(Events).Count
+Expect-Error { Run $mixed Execute -OnMissing Stop } 'row 3.*Missing'
+$trace=@(Events | Select-Object -Skip $start | Where-Object { $_ -match '^SET ' })
+Assert (($trace -join ',') -ceq 'SET One True') 'Row-by-row Stop ignored the cached missing row or rejected prior rows'
+$passed++
+
+[IO.File]::WriteAllText((Join-Path $runnerDir 'missing-now-exists'),'fixture')
+Run $mixed Check
+$newCheck=Read-Latest $mixed
+Assert ($newCheck.status -ceq 'checked' -and $newCheck.projects[1].status -ceq 'checked') 'Explicit Check did not refresh a formerly missing project'
+Run $mixed Execute -CheckFirst -OnMissing Stop
+Assert ((Read-Latest $mixed).counts.verified -eq 3 -and (Read-Latest $mixed).check_attempt -ceq $newCheck.attempt) 'Refreshed Check did not replace a cached skip'
+Remove-Item (Join-Path $runnerDir 'missing-now-exists')
+$passed++
+
+[IO.File]::WriteAllText((Join-Path $runnerDir 'renumbered'),'fixture')
+$start=@(Events).Count
+Expect-Error { Run $mixed Execute } 'identity changed since Check'
+Assert (-not @(Events | Select-Object -Skip $start | Where-Object { $_ -match '^SET ' }).Count) 'A reused name with a new project number was applied'
+Remove-Item (Join-Path $runnerDir 'renumbered')
+$passed++
+
+Write-CsvText "domain,project_name`nOnindus,Missing`n"
+$zero=Join-Path $testRoot 'zero'
+Run $zero Check
+Run $zero Execute
+$report=Read-Latest $zero
+Assert ($report.status -ceq 'completed-with-skips' -and $report.counts.verified -eq 0 -and $report.counts.skipped -eq 1) 'An all-missing batch claimed verified flags'
+$passed++
+
+# Use a genuine completed report to exercise legacy status and malformed
+# history. Its immutable batch binding alone cannot certify an unfinished row.
+Write-CsvText "domain,project_name`nOnindus,One`n"
+$historyState=Join-Path $testRoot 'check-history'
+Run $historyState Check
+$legacyCheck=Read-Latest $historyState
+$legacyCheck.schema=1
+$legacyCheck.projects[0].PSObject.Properties.Remove('reason')
+$legacyCheck.projects[0].receipt.reopened=$true
+$savedPath=Join-Path (Join-Path (Join-Path $historyState 'attempts') $legacyCheck.attempt) 'result.json'
+Write-KahuaFlagJson $savedPath $legacyCheck
+Run $historyState Execute
+Assert ((Read-Latest $historyState).check_attempt -ceq $legacyCheck.attempt) 'A matching legacy completed Check was not reused'
+$hash=$legacyCheck.input_hash
+$legacyCheck.PSObject.Properties.Remove('input_hash')
+Write-KahuaFlagJson $savedPath $legacyCheck
+Run $historyState Execute
+Assert ((Read-Latest $historyState).check_attempt -ceq $legacyCheck.attempt) 'Original pre-hash Check did not use its binding and numbered receipts'
+$legacyCheck | Add-Member NoteProperty input_hash $hash
+foreach ($bad in @('row','hash','unfinished','domain','flag','failed')) {
+    $broken=$legacyCheck | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+    switch ($bad) {
+        'row' { $broken.projects=@() }
+        'hash' { $broken.input_hash='another batch' }
+        'unfinished' { $broken.projects[0].status='planned' }
+        'domain' { $broken.projects[0].domain='Other' }
+        'flag' { $broken.projects[0].desired_enabled=$false }
+        'failed' { $broken.status='failed' }
+    }
+    Write-KahuaFlagJson $savedPath $broken
+    Run $historyState Execute
+    Assert ($null -eq (Read-Latest $historyState).check_attempt) "Reused incomplete or mismatched Check: $bad"
+}
+$passed++
 Write-CsvText "domain,project_name`nOnindus,One`nOnindus,Two`n"
 [IO.File]::WriteAllText((Join-Path $runnerDir 'wrong-domain'),'fixture')
 $count=@(Events).Count
@@ -243,7 +362,8 @@ $passed++
 [IO.File]::WriteAllText((Join-Path $runnerDir 'paused'),'fixture')
 $count=@(Events).Count
 Expect-Error { Run (Join-Path $testRoot 'paused-enable') Execute } 'paused'
-Assert (-not @(Events | Select-Object -Skip $count | Where-Object { $_ -match '^SET ' }).Count) 'Paused account was detected only after mutations'
+Assert (-not @(Events | Select-Object -Skip $count | Where-Object { $_ -match '^SAVE ' }).Count) 'Paused account was detected only after Save'
+Assert ((Read-Latest (Join-Path $testRoot 'paused-enable')).projects[0].status -ceq 'failed') 'Read-only refusal was recorded as an uncertain write'
 Run (Join-Path $testRoot 'paused-disable') Execute Disable
 Remove-Item (Join-Path $runnerDir 'paused')
 $passed++
@@ -256,7 +376,7 @@ $uncertainState=Join-Path $testRoot 'uncertain'
 $count=@(Events).Count
 Expect-Error { Run $uncertainState Execute } 'Uncertain Save'
 $report=Read-Latest $uncertainState
-Assert ($report.status -eq 'failed' -and $report.projects[0].status -eq 'uncertain' -and $report.projects[1].status -eq 'checked') 'Uncertain save reported as complete or continued'
+Assert ($report.status -eq 'failed' -and $report.projects[0].status -eq 'uncertain' -and $report.projects[1].status -eq 'planned') 'Uncertain save reported as complete or continued'
 Assert (-not @(Events | Select-Object -Skip $count | Where-Object { $_ -match '^SET Two ' }).Count) 'Queue continued after uncertain Save'
 Assert ((Get-Content $report.progress_log -Raw) -match 'Outcome is uncertain; inspect settings before resuming') 'Log hid an uncertain Save'
 $passed++
@@ -288,12 +408,15 @@ $tokens=$null; $parseErrors=$null
 $ast=[System.Management.Automation.Language.Parser]::ParseFile(
     (Join-Path $PSScriptRoot 'KahuaSyncFlagDesktop.psm1'),[ref]$tokens,[ref]$parseErrors)
 Assert (-not $parseErrors.Count) 'Desktop adapter does not parse'
-$setter=$ast.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Set-KahuaProjectFlag'},$true)
-$adapterHarness=New-Module -Name KahuaFlagSetterFixture -ArgumentList $setter.Extent.Text -ScriptBlock {
+$flagMethods=@('Get-KahuaProjectFlag','Set-KahuaProjectFlag') | ForEach-Object {
+    $name=$_
+    $ast.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true).Extent.Text
+}
+$adapterHarness=New-Module -Name KahuaFlagSetterFixture -ArgumentList ($flagMethods -join "`n") -ScriptBlock {
     param($SetterText)
     . ([scriptblock]::Create($SetterText))
     function Reset-FlagFixture([string]$Selection='Off',[string]$Account='running') {
-        $script:account=$Account; $script:persisted=$Selection; $script:saves=0; $script:closes=0
+        $script:account=$Account; $script:persisted=$Selection; $script:saves=0; $script:closes=0; $script:reads=0
         $script:badRead=$false; $script:failSave=$false; $script:failWait=$false; $script:waits=0
         $script:save=[pscustomobject]@{Current=[pscustomobject]@{IsEnabled=$false}}
         $script:toggle=[pscustomobject]@{Current=[pscustomobject]@{ToggleState=$Selection};Count=0;Stuck=$false;SaveControl=$script:save}
@@ -325,10 +448,11 @@ $adapterHarness=New-Module -Name KahuaFlagSetterFixture -ArgumentList $setter.Ex
     function Close-KahuaFlagSettings { $script:closes++ }
     function Read-KahuaFlagSelection {
         param($Identity)
+        $script:reads++
         [pscustomobject]@{selection=$(if ($script:badRead) { 'Indeterminate' } else { $script:persisted });
             account_sync_state=$script:account;sync_root='fixture-project-root'}
     }
-    function Get-FlagFixture { [pscustomobject]@{saves=$script:saves;toggles=$script:toggle.Count;closes=$script:closes;persisted=$script:persisted;waits=$script:waits} }
+    function Get-FlagFixture { [pscustomobject]@{saves=$script:saves;toggles=$script:toggle.Count;closes=$script:closes;persisted=$script:persisted;waits=$script:waits;reads=$script:reads} }
     function Set-FlagFixtureFault([string]$Fault) {
         switch ($Fault) {
             'read' { $script:badRead=$true }
@@ -338,15 +462,19 @@ $adapterHarness=New-Module -Name KahuaFlagSetterFixture -ArgumentList $setter.Ex
             'wait' { $script:failWait=$true }
         }
     }
-    Export-ModuleMember -Function Set-KahuaProjectFlag,Reset-FlagFixture,Get-FlagFixture,Set-FlagFixtureFault
+    Export-ModuleMember -Function Get-KahuaProjectFlag,Set-KahuaProjectFlag,Reset-FlagFixture,Get-FlagFixture,Set-FlagFixtureFault
 }
 Import-Module $adapterHarness -Force
 $id=[pscustomobject]@{environment='DEVPRODUCTION';domain='Onindus';project_name='One';project_number='0001';display='0001 - One'}
+Reset-FlagFixture Off
+$preview=Get-KahuaProjectFlag -Identity $id
+Assert ((Get-FlagFixture).reads -eq 1 -and -not $preview.reopened -and $preview.selection -ceq 'Off') 'Check did not report its single observation'
+$passed++
 foreach ($case in @(@('Off',$true,'On'),@('On',$false,'Off'),@('Indeterminate',$true,'On'),@('Indeterminate',$false,'Off'))) {
     Reset-FlagFixture $case[0]
     $receipt=Set-KahuaProjectFlag -Identity $id -Enabled $case[1]
     $detail=Get-FlagFixture
-    Assert ($receipt.selection -eq $case[2] -and $receipt.reopened -and $detail.saves -eq 1 -and $detail.closes -eq 1 -and $detail.waits -eq 1) 'Actual setter did not wait, save and reopen the requested root state'
+    Assert ($receipt.selection -eq $case[2] -and $receipt.reopened -and $detail.reads -eq 1 -and $detail.saves -eq 1 -and $detail.closes -eq 1 -and $detail.waits -eq 1) 'Actual setter did not wait, save and reopen exactly once'
     Assert ($detail.toggles -ge 1 -and $detail.toggles -le 2) 'Unexpected toggle cycle'
     $passed++
 }
@@ -354,7 +482,7 @@ foreach ($case in @(@('On',$true),@('Off',$false))) {
     Reset-FlagFixture $case[0]
     $receipt=Set-KahuaProjectFlag -Identity $id -Enabled $case[1]
     $detail=Get-FlagFixture
-    Assert (-not $receipt.changed -and $receipt.reopened -and $detail.saves -eq 0 -and $detail.toggles -eq 0) 'Actual setter toggled an already correct state'
+    Assert (-not $receipt.changed -and $receipt.reopened -and $detail.reads -eq 1 -and $detail.saves -eq 0 -and $detail.toggles -eq 0) 'Already-correct flag was modified or not reopened once'
 }
 $passed++
 Reset-FlagFixture Off
@@ -454,7 +582,24 @@ Remove-Module $saveHarness
 if (-not ('System.Windows.Automation.ElementNotAvailableException' -as [type])) {
     Add-Type 'namespace System.Windows.Automation { public class ElementNotAvailableException : System.Exception { public ElementNotAvailableException() : base("Unrecognized error.") {} } }'
 }
-$selectorSource=@('Select-KahuaFlagProject','Wait-KahuaFlagProjectOpen') | ForEach-Object {
+# Model the picker tree so the tests exercise the production result reader as
+# well as its consumer. Use a fresh PowerShell process, as in the other UI fixtures.
+if ('System.Windows.Automation.TreeWalker' -as [type]) { throw 'Run the project flag fixtures in a fresh PowerShell process.' }
+Add-Type @'
+namespace System.Windows.Automation {
+    public class TreeWalker { public static object RawViewWalker; }
+    public class ControlType { public static string Window="Window", ListItem="ListItem"; }
+    public class ValuePattern { public static string Pattern="Value"; }
+    public class ScrollPattern { public static string Pattern="Scroll"; }
+    public class TreeScope { public static string Descendants="Descendants"; }
+    public class AutomationElement { public static string ControlTypeProperty="Type"; }
+    public class PropertyCondition { public PropertyCondition(object property, object value) {} }
+}
+'@
+$walker=[pscustomobject]@{}
+$walker | Add-Member ScriptMethod GetParent { param($Control) $Control.parent }
+[Windows.Automation.TreeWalker]::RawViewWalker=$walker
+$selectorSource=@('Get-KahuaSearchProjectRows','Select-KahuaFlagProject','Wait-KahuaFlagProjectOpen') | ForEach-Object {
     $name=$_
     $ast.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true).Extent.Text
 }
@@ -464,18 +609,38 @@ $searchHarness=New-Module -Name KahuaFlagSearchFixture -ArgumentList ($selectorS
     function Reset-SearchFixture([string]$Mode) {
         $script:mode=$Mode; $script:reads=0; $script:picked=''; $script:query=''; $script:closed=$false
         $script:projectClicks=0; $script:navigationReads=0
-        $script:search=[pscustomobject]@{kind='search'}
+        $shell=[pscustomobject]@{Current=[pscustomobject]@{ControlType='Window';AutomationId=''}}
+        $panel=[pscustomobject]@{kind='panel';Current=[pscustomobject]@{ControlType='Group';AutomationId=''};parent=$shell}
+        $script:search=[pscustomobject]@{kind='search';parent=$panel}
+        $script:search | Add-Member ScriptMethod GetCurrentPattern {
+            $script:reads++
+            $value=if ($script:mode -eq 'wrong-query') { 'Other' } else { $script:query }
+            [pscustomobject]@{Current=[pscustomobject]@{Value=$value}}
+        }
         $script:picker=[pscustomobject]@{kind='picker'}
     }
     function Confirm-KahuaFlagDomain { param($Environment,$Domain) }
     function Assert-KahuaFlagNoSyncError { }
+    function Get-KahuaControlName($Control) { $Control.Current.Name }
+    function Select-KahuaUniqueElement { param([object[]]$Elements) $Elements }
     function Get-KahuaActiveRoot {
         $script:navigationReads++
         [pscustomobject]@{generation=$script:navigationReads}
     }
     function Find-KahuaControl {
         param($Id,$Name,$Type,$Root,[switch]$All)
-        if ($Id -in @('HomeButton','Shell_HomePartitionSelector')) { return $script:picker }
+        if ($Root -and $Root.PSObject.Properties['kind'] -and $Root.kind -eq 'panel') {
+            if ($Id -eq 'HomeButton' -and $script:mode -eq 'outside-picker') { return $script:picker }
+            if ($Name -ceq 'Find a Project') { return $script:picker }
+            if ($Type -eq 'List' -and $script:mode -notin @('no-list','outside-picker')) { return (New-SearchList) }
+            if ($Type -eq 'ProgressBar' -and $script:mode -eq 'busy') { return $script:picker }
+            if ($Type -eq 'Text' -and $script:mode -in @('empty','no-list','busy','outside-picker')) {
+                return [pscustomobject]@{Current=[pscustomobject]@{Name='No results found.'}}
+            }
+            return
+        }
+        if ($Id -eq 'HomeButton') { return [pscustomobject]@{kind='home'} }
+        if ($Id -eq 'Shell_HomePartitionSelector') { return $script:picker }
         if ($Root -and $Root.generation -eq 1 -and
             (($script:mode -eq 'header-stale' -and $Id -eq 'Shell_PartitionSelector') -or
             ($script:mode -eq 'picker-stale' -and $Id -eq 'SearchBox'))) {
@@ -498,28 +663,32 @@ $searchHarness=New-Module -Name KahuaFlagSearchFixture -ArgumentList ($selectorS
     function Set-KahuaValue { param($Control,$Value) $script:query=$Value }
     function Invoke-KahuaControl {
         param($Control,[switch]$Click)
+        if ($Control.kind -eq 'home') { $script:closed=$true }
+        if ($Control.kind -eq 'picker') { $script:closed=$false }
         if ($Control.kind -eq 'result') {
             $script:projectClicks++; $script:picked=$Control.Current.Name; $script:closed=$true
             if ($script:mode -eq 'click-stale') { throw [System.Windows.Automation.ElementNotAvailableException]::new() }
         }
     }
     function New-SearchResult([string]$Name,[int]$Id) {
-        $item=[pscustomobject]@{kind='result';Current=[pscustomobject]@{Name=$Name};runtime=$Id}
+        $item=[pscustomobject]@{kind='result';Current=[pscustomobject]@{Name=$Name;IsOffscreen=$false};runtime=$Id}
         $item | Add-Member ScriptMethod GetRuntimeId { return @($this.runtime) }
         return $item
     }
-    function Get-KahuaSearchProjectRows {
-        param($Search)
-        $script:reads++
-        if ($script:mode -eq 'refresh' -and $script:reads -eq 1) {
-            return [pscustomobject]@{rows=@();complete=$false;reason='Loading results'}
-        }
+    function New-SearchList {
         $rows=@((New-SearchResult '0001 - One' 1),(New-SearchResult '0002 - Parent - One' 2))
+        if ($script:mode -eq 'related') { $rows=@((New-SearchResult '0002 - One Annex' 2)) }
+        if ($script:mode -in @('empty','loading') -or ($script:mode -eq 'refresh' -and $script:reads -le 8)) { $rows=@() }
+        if ($script:mode -eq 'unfiltered') { $rows=@((New-SearchResult '0001 - Stale result' 1)) }
+        if ($script:mode -eq 'bare') { $rows=@((New-SearchResult 'One' 1)) }
         if ($script:mode -eq 'duplicate') { $rows += New-SearchResult '0003 - One' 3 }
-        $complete=$script:mode -ne 'incomplete'
-        [pscustomobject]@{rows=$rows;complete=$complete;reason=$(if ($complete) { '' } else { 'Incomplete result list' })}
+        if ($script:mode -eq 'incomplete') { $rows[1].Current.IsOffscreen=$true }
+        $list=[pscustomobject]@{Current=[pscustomobject]@{IsEnabled=$true};rows=$rows}
+        $list | Add-Member ScriptMethod FindAll { param($Scope,$Condition) $this.rows }
+        $list | Add-Member ScriptMethod TryGetCurrentPattern { param($Pattern,$Result) return $false }
+        return $list
     }
-    function Get-SearchFixture { [pscustomobject]@{picked=$script:picked;reads=$script:reads;query=$script:query;project_clicks=$script:projectClicks;navigation_reads=$script:navigationReads} }
+    function Get-SearchFixture { [pscustomobject]@{picked=$script:picked;reads=$script:reads;query=$script:query;project_clicks=$script:projectClicks;navigation_reads=$script:navigationReads;closed=$script:closed} }
     Export-ModuleMember -Function Select-KahuaFlagProject,Reset-SearchFixture,Get-SearchFixture
 }
 Import-Module $searchHarness -Force
@@ -534,9 +703,26 @@ Expect-Error { Select-KahuaFlagProject -Environment DEVPRODUCTION -Domain Onindu
 Assert (-not (Get-SearchFixture).picked) 'Ambiguous exact name was selected'
 $passed++
 Reset-SearchFixture incomplete
-Expect-Error { Select-KahuaFlagProject -Environment DEVPRODUCTION -Domain Onindus -Name One } 'Incomplete result list'
+Expect-Error { Select-KahuaFlagProject -Environment DEVPRODUCTION -Domain Onindus -Name One } 'offscreen results'
 Assert (-not (Get-SearchFixture).picked) 'Incomplete search result list was selected'
 $passed++
+Reset-SearchFixture wrong-query
+Expect-Error { Select-KahuaFlagProject -Environment DEVPRODUCTION -Domain Onindus -Name One } 'search text changed'
+$passed++
+foreach ($case in @('empty','no-list','related','unfiltered','bare','loading','busy','outside-picker')) {
+    Reset-SearchFixture $case
+    $failure=$null
+    try { Select-KahuaFlagProject -Environment DEVPRODUCTION -Domain Onindus -Name One -SearchTimeoutSeconds 3 }
+    catch { $failure=$_ }
+    $observed=Get-SearchFixture
+    Assert ($null -ne $failure -and $observed.project_clicks -eq 0) 'Negative search selected a project'
+    if ($case -in @('empty','no-list','related')) {
+        Assert ($failure.Exception.Data['KahuaFlagMissingProject'] -eq $true -and $observed.closed) 'Confirmed miss did not close the picker and return a missing-name outcome'
+    } else {
+        Assert ($failure.Exception.Message -match 'No unique, stable' -and -not $failure.Exception.Data['KahuaFlagMissingProject']) "Unconfirmed search was treated as missing: $case"
+    }
+    $passed++
+}
 foreach ($fault in @('header-stale','picker-stale')) {
     Reset-SearchFixture $fault
     $log=New-KahuaFlagLogContext Check

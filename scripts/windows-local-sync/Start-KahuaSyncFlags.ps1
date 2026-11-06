@@ -1,7 +1,7 @@
 #requires -Version 5.1
 <#
-Interactive launcher. Plan and Check run first; APPLY authorizes the reviewed
-batch. The low-level runner remains available for noninteractive use.
+Interactive launcher. Plan lists the requested settings. APPLY authorizes
+Execute with the selected missing-name and whole-batch check options.
 #>
 [CmdletBinding()]
 param(
@@ -11,7 +11,9 @@ param(
     [ValidateSet('Enable','Disable','FromCsv')][string]$Action,
     [string]$StateRoot,
     [string]$HistoryRoot,
-    [ValidateRange(0,3)][int]$RecoveryAttempts=2
+    [ValidateRange(0,3)][int]$RecoveryAttempts=2,
+    [switch]$CheckFirst,
+    [ValidateSet('Skip','Stop')][string]$OnMissing='Skip'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
@@ -49,27 +51,29 @@ try {
     $displayDomain=if ($rows[0].domain) { $rows[0].domain } else { '(read from Kahua and checked against this saved batch)' }
     Write-Host "Domain: $displayDomain"
     Write-Host "Run history: $batchState"
-    # Freeze the reviewed intent's state directory through Plan, Check and
-    # Execute. A CSV edited during a prompt must fail binding, not silently
+    # Freeze the reviewed intent's state directory through Plan and Execute.
+    # A CSV edited during a prompt must fail binding, not silently
     # select a new batch and apply unreviewed rows.
     $run=@{CsvPath=$CsvPath;Environment=$Environment;Action=$Action;
         StateRoot=$batchState;RecoveryAttempts=$RecoveryAttempts;
         ExpectedInputHash=(Get-KahuaFlagInputHash -Rows $rows)}
     if ($Domain) { $run.Domain=$Domain }
     & $runner @run -Mode Plan
-    & $runner @run -Mode Check
     Write-Host "Requested settings for $Environment / $displayDomain`:"
     foreach ($row in $rows) {
         $desired=if ($row.sync_enabled) { 'On' } else { 'Off' }
         Write-Host "  $($row.project_name): Folders = $desired"
     }
-    $answer=Read-Host "Checks passed for $($rows.Count) project(s). Type APPLY to apply the settings shown above, or press Enter to finish without changes"
+    if ($CheckFirst) { Write-Host 'Execute will use a completed whole-list Check or run one before changing flags.' }
+    else { Write-Host 'Execute will process the projects in CSV order, using a completed Check when available.' }
+    Write-Host "Missing project names: $OnMissing."
+    $answer=Read-Host "Type APPLY to apply the settings shown above for $($rows.Count) project(s), or press Enter to finish after Plan"
     if ($answer -cne 'APPLY') {
-        Write-Host 'Finished after checking. No project switches were changed.'
+        Write-Host 'Finished after Plan.'
         return
     }
-    & $runner @run -Mode Execute
-    Write-Host 'Project settings verified. Check file-transfer completion separately in Kahua.'
+    & $runner @run -Mode Execute -CheckFirst:$CheckFirst -OnMissing $OnMissing
+    Write-Host 'See the row totals above. Check file-transfer completion separately in Kahua.'
 } catch {
     Write-Host "Stopped: $($_.Exception.Message)" -ForegroundColor Red
     Write-Host 'Keep the run history. Resolve the reported issue, then start the launcher again with the same inputs to resume.'

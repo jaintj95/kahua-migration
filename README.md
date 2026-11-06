@@ -14,27 +14,23 @@ install the other.
 
 For **Doe's simpler flag workflow**, double-click `Start-SyncFlags.cmd` and
 follow the prompts in [SYNC_FLAGS.md](SYNC_FLAGS.md#guided-launcher). The launcher
-checks all projects before offering APPLY. It manages batch history automatically;
-retries use the same history and changed inputs get a separate batch. `StateRoot`
-remains available for existing manual batches. Bounded recovery retries eligible
-reads and reconciles a saved setting without repeating Save. It reads
-exact project names, sets each project's own Folders switch to the requested
-boolean, and verifies the saved setting. Doe places the files and Kahua handles
-the transfers. Five live project reads passed, and Seattle completed a saved
-Disable/Enable cycle after the Save wait was corrected. The guide records the
-55 passing flag scenarios, 16 geometry/read scenarios, exact-name CSV correction,
-and pilot limits. Each flag run prints its current project and step and saves
-a live `progress.log`; the guide includes the command to follow that log.
+shows the planned settings before offering APPLY. Execute processes one project
+at a time, skips confirmed missing names, and reopens settings once per match
+to verify. Use `-CheckFirst` for a whole-list Check and `-OnMissing Stop` to
+stop on a missing name. Execute reuses a completed Check for the same batch.
+Run `-Mode Check` on the PowerShell runner for a fresh read-only preview,
+including another search for skipped names. A retry with the same inputs uses
+the same batch history. `-StateRoot` selects an existing manual batch.
+The console and `progress.log` identify the current project and step.
+`result.json` records each row and totals the changed, already-correct, and
+skipped projects on completion. Doe places the files and Kahua handles transfers.
 
-For production, use the [production commands and resume instructions](SYNC_FLAGS.md#production-commands).
-`Environment = 'PRODUCTION'` is required even without a visible client label;
-the runner verifies the registered production package. The guide distinguishes
-new batches from the VM's existing state, explains state-binding errors and
-same-name sync conflicts, and records the 198 passing Windows fixture checks.
-The new guided launcher and bounded recovery have passed simulated tests on
-Windows PowerShell 5.1; live Kahua validation and VM deployment remain pending.
-The latest live production Check is blocked by Kahua's existing sync-name
-conflict; production Enable has not been validated.
+For production, use `-Environment PRODUCTION`. The runner verifies the
+registered Windows client. The guide covers command examples, saved batch
+history, and the same-name sync conflict observed in the November 5 production
+Check. It records automated test results separately from the earlier live
+five-project Check and Seattle Disable/Enable pilot.
+[Production commands](SYNC_FLAGS.md#production-commands) · [Validation results](SYNC_FLAGS.md#validation-and-current-limits)
 
 For **documents and photos**, see [LOCAL_FILE_SYNC.md](LOCAL_FILE_SYNC.md).
 The PowerShell CSV runner selects existing projects, controls Local Files Sync,

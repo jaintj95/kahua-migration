@@ -22,11 +22,12 @@ function Select-KahuaFlagProject {
     Event "SELECT $Name"
     Event "NAV-RECOVERY $RecoveryAttempts"
     if (Test-Path (Join-Path $PSScriptRoot 'fail-check')) { throw 'Fixture check failed' }
-    [pscustomobject]@{environment=$Environment;domain=$Domain;project_name=$Name;display="0001 - $Name"}
+    [pscustomobject]@{environment=$Environment;domain=$Domain;project_name=$Name;project_number='0001';display="0001 - $Name"}
 }
 function Receipt($Identity,$Selection) {
     [pscustomobject]@{environment=$Identity.environment;domain=$Identity.domain;project_name=$Identity.project_name;
-        selection=$Selection;scope='project-files';reopened=$true;account_sync_state='running'}
+        project_number=$Identity.project_number;display=$Identity.display;
+        selection=$Selection;scope='project-files';reopened=$false;account_sync_state='running'}
 }
 function Get-KahuaProjectFlag {
     param($Identity,$LogContext,$RecoveryAttempts)
@@ -36,7 +37,10 @@ function Get-KahuaProjectFlag {
 function Set-KahuaProjectFlag {
     param($Identity,[bool]$Enabled,$LogContext,$RecoveryAttempts)
     Event "SET $($Identity.project_name) $Enabled"
-    Receipt $Identity $(if ($Enabled) { 'On' } else { 'Off' })
+    $receipt=Receipt $Identity $(if ($Enabled) { 'On' } else { 'Off' })
+    $receipt.reopened=$true
+    $receipt | Add-Member NoteProperty changed $true
+    return $receipt
 }
 Export-ModuleMember -Function Initialize-KahuaFlagDomain,Select-KahuaFlagProject,Get-KahuaProjectFlag,Set-KahuaProjectFlag
 '@
@@ -171,8 +175,8 @@ try {
     Answers @('')
     $start=@(Events).Count
     & $launcher -CsvPath $csv -Environment PRODUCTION -Action Enable -HistoryRoot $history | Out-Null
-    Assert (-not @(Events | Select-Object -Skip $start | Where-Object { $_ -match '^SET ' }).Count) 'Declining APPLY changed a flag'
-    Assert ($global:KahuaLauncherFixture.Prompts.Count -eq 1 -and $global:KahuaLauncherFixture.Prompts[0] -match 'Checks passed') 'Apply prompt did not follow successful checks'
+    Assert (@(Events).Count -eq $start) 'Declining APPLY touched the desktop'
+    Assert ($global:KahuaLauncherFixture.Prompts.Count -eq 1 -and $global:KahuaLauncherFixture.Prompts[0] -match 'Type APPLY') 'Apply prompt did not follow Plan'
     $passed++
     Answers @('APPLY')
     $start=@(Events).Count
@@ -180,7 +184,7 @@ try {
     Assert (@(Events | Select-Object -Skip $start | Where-Object { $_ -ceq 'SET One True' }).Count -eq 1) 'Approved launcher did not apply the reviewed project'
     Assert ((Latest $first).status -eq 'flags-verified') 'Launcher completion lacks verified result'
     $navigationOptions=@(Events | Select-Object -Skip $start | Where-Object { $_ -match '^NAV-RECOVERY ' })
-    Assert ($navigationOptions.Count -eq 3 -and -not @($navigationOptions | Where-Object { $_ -cne 'NAV-RECOVERY 0' }).Count) 'Launcher recovery option was lost before Check, Execute preflight, or Execute selection'
+    Assert ($navigationOptions.Count -eq 1 -and $navigationOptions[0] -ceq 'NAV-RECOVERY 0') 'Default launcher selected a project twice or lost the recovery option'
     $passed++
     Answers @('APPLY')
     $global:KahuaLauncherFixture.ChangeAtApply=$true
@@ -189,11 +193,12 @@ try {
     Assert (-not @(Events | Select-Object -Skip $start | Where-Object { $_ -match '^SET ' }).Count) 'Editing the CSV during review applied unreviewed settings'
     $passed++
     Csv
-    Answers @()
+    Answers @('APPLY')
     [IO.File]::WriteAllText((Join-Path $code 'fail-check'),'fixture')
     $start=@(Events).Count
-    Expect-Error { & $launcher -CsvPath $csv -Environment PRODUCTION -Action Enable -HistoryRoot $history } 'Fixture check failed'
-    Assert ($global:KahuaLauncherFixture.Prompts.Count -eq 0) 'Failed Check still offered APPLY'
+    Expect-Error { & $launcher -CsvPath $csv -Environment PRODUCTION -Action Enable -HistoryRoot $history -CheckFirst -OnMissing Stop } 'Fixture check failed'
+    $failure=Latest $first
+    Assert ($failure.failed_phase -eq 'Preflight' -and $failure.check_first -and $failure.on_missing -ceq 'Stop') 'Launcher did not forward the two overrides'
     Assert (-not @(Events | Select-Object -Skip $start | Where-Object { $_ -match '^SET ' }).Count) 'Failed Check reached Execute'
     Remove-Item (Join-Path $code 'fail-check')
     $passed++
@@ -201,13 +206,13 @@ try {
     Answers @('Onindus','')
     & $launcher -CsvPath $csv -Environment PRODUCTION -Action Enable -HistoryRoot $history | Out-Null
     Assert ($global:KahuaLauncherFixture.Prompts[0] -match 'Exact domain') 'Names-only automatic batch did not ask for domain'
-    Assert ((Latest (Batch PRODUCTION Enable Onindus)).status -eq 'checked') 'Manual domain launcher did not complete Check'
+    Assert ((Latest (Batch PRODUCTION Enable Onindus)).status -eq 'planned') 'Manual domain launcher did not complete Plan'
     $passed++
     Csv
     Answers @($csv,'','bad-action','Disable','')
     & $launcher -HistoryRoot $history | Out-Null
     Assert ($global:KahuaLauncherFixture.Answers.Count -eq 0) 'Interactive setup did not consume the expected answers'
-    Assert ((Latest (Batch PRODUCTION Disable)).status -eq 'checked') 'Interactive action/environment setup failed'
+    Assert ((Latest (Batch PRODUCTION Disable)).status -eq 'planned') 'Interactive action/environment setup failed'
     $passed++
     # A corrupt binding is not treated as a missing batch or silently replaced.
     $bindingPath=Join-Path $first 'binding.json'

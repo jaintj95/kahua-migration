@@ -94,11 +94,13 @@ does not guess based on folder location or a placeholder UID.
 3. Enter the CSV path, environment, and `Enable`, `Disable`, or `FromCsv`.
    The environment prompt defaults to `PRODUCTION`. For a names-only CSV, enter
    the exact domain already selected in Kahua; this is checked before any change.
-4. The launcher runs Plan and checks every project, then shows the requested
-   settings for review. After successful checks, type **`APPLY`** to apply the displayed
-   settings, or press Enter to finish without changing switches.
-5. Read the final result. `flags-verified` confirms settings only; check Kahua
-   separately to establish that files finished transferring.
+4. The launcher runs Plan and shows the requested settings. Type **`APPLY`**
+   to start Execute, or press Enter to finish after Plan.
+5. Execute finishes each matched project before moving to the next CSV row.
+   It reads the switch, changes and saves it if needed, then reopens settings
+   once to verify. A confirmed missing name is logged and skipped. The final
+   line counts changed, already-correct, and skipped projects. Check transfer
+   completion separately in Kahua.
 
 The same launcher works for subsequent batches and retries. It manages history
 automatically; you do not need to invent timestamps or supply `StateRoot`.
@@ -192,7 +194,8 @@ Plan the supplied CSV without touching Kahua:
   -Environment DEVPRODUCTION -Action Enable -Mode Plan
 ```
 
-Search all projects and read their current flags without changing them:
+To preview the whole batch, run a read-only Check. It searches the names
+and opens settings once per match to read the current flag.
 
 ```powershell
 .\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1 `
@@ -200,7 +203,7 @@ Search all projects and read their current flags without changing them:
   -Environment DEVPRODUCTION -Action Enable -Mode Check
 ```
 
-After Check succeeds, enable:
+To enable the flags, run Execute directly or after a preview.
 
 ```powershell
 .\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1 `
@@ -220,6 +223,26 @@ same CSV. Automatic history chooses a separate batch for the opposite action:
 For a `sync_enabled` CSV, use `-Action FromCsv`. Plan is the default mode when
 `-Mode` is omitted; a mode must be changed to Execute before flags are written.
 
+| Execute options | When a name is missing |
+| --- | --- |
+| Defaults | Record the CSV row and name as skipped, then continue. |
+| `-OnMissing Stop` | Stop at that row. Earlier verified rows stay recorded. |
+| `-CheckFirst` | Use a completed whole-list Check or run one before the first write. Apply the matches. |
+| `-CheckFirst -OnMissing Stop` | A missing name in the whole-list Check stops Execute before the first write. |
+
+Both overrides also work on `Start-SyncFlags.cmd` and the PowerShell launcher.
+For example, `.\Start-SyncFlags.cmd -CheckFirst -OnMissing Stop` prompts for
+the usual inputs and enforces both options after APPLY.
+
+Execute reuses the latest Check in this batch's history when it completed and
+matches the ordered projects, requested switches, environment and domain. It
+carries forward that Check's skipped names. For each reviewed match, Execute
+finds the project again, compares its displayed number and name, and reads the
+switch live. Run `-Mode Check` to refresh the list, including skipped names.
+If a newer Check failed or stopped partway, Execute checks each row as it
+goes. With `-CheckFirst`, it runs a fresh whole-list Check before the first
+write. A project that changes after a Check can still cause a stop during Execute.
+
 ### Production commands
 
 Use the current repository version containing `Start-SyncFlags.cmd` and the
@@ -236,8 +259,8 @@ Set-Location -LiteralPath "$env:USERPROFILE\Desktop\Projects\kahua-migration"
 ```
 
 Run the same command again after an interruption, or after updating the CSV
-for another batch. The launcher chooses the history and checks projects before
-offering APPLY. You do not need to edit a state-folder name.
+for another batch. The launcher chooses the history and shows the requested
+settings before offering APPLY.
 
 **Resuming an older batch with a manually chosen folder:** pass its existing
 `-StateRoot`. This example belongs to the original **one-project** supervised
@@ -254,15 +277,16 @@ The later CSV containing an additional `Unit 4923` is a different batch. Use
 automatic history for that changed list and preserve the older folder. The
 same rule applies to any added/removed projects or changed switch values.
 
-The latest supervised production Check remains blocked by Kahua's **Unable to
-sync / project of the same name already synced** warning. Resolve the existing
+The November 5 supervised production Check stopped on Kahua's **Unable to
+sync / project of the same name already synced** warning. For that batch, resolve the
 sync mapping conflict with the Kahua administrator, then close the dialog and
 rerun. Clearing the message alone does not resolve the conflict. Automatic
 history and recovery do not repair Kahua's mapping or prove file transfers.
 
-Read the report path printed by each invocation. Check success is `checked`;
-Execute success is `flags-verified`, with reopened readbacks in its project
-receipts. `failed` or an `uncertain` row requires inspecting the reported issue.
+Read the report path printed by each invocation. A whole-list preview finishes
+as `checked` or `checked-with-skips`. Execute reports `flags-verified` when
+every row verifies, or `completed-with-skips` when any names were skipped.
+Every verified Execute row has a reopened readback. `failed` or an `uncertain` row requires inspecting the reported issue.
 Keep all attempts and their `progress.log` files.
 
 ## Results and recovery
@@ -272,7 +296,7 @@ project name, queue position, and the current step. For example:
 
 ```text
 [+4.8s] [INFO] [Check/Preflight 1/5 | 220 - Seattle Heights] project-open: Opening ...
-[+18.2s] [INFO] [Check/Preflight 1/5 | 220 - Seattle Heights] checked: Folders=On; account sync=running; reopened=True.
+[+18.2s] [INFO] [Check/Preflight 1/5 | 220 - Seattle Heights] checked: Folders=On; account sync=running; reopened=False.
 ```
 
 Each attempt also writes a flushed UTF-8 `progress.log` beside `result.json`.
@@ -296,17 +320,20 @@ only. Failures later in a run record `failed_step`, `failed_phase`, the project,
 and a stack trace in `result.json`, with a final `STOPPED` line in the log.
 
 Each attempt writes `StateRoot\attempts\<attempt>\result.json`, including the
-requested value, exact project identity, reopened flag readback, account sync
-state, and derived local directory. `binding.json` binds the state directory to
+requested value, row outcome, and the exact identity, flag, account sync
+state and local directory for matched rows. A skipped row has
+`reason: missing-project`. When Execute uses a whole-list Check,
+`check_attempt` identifies it. A Check performed inside Execute is saved
+in that attempt's `check.json`. `binding.json` binds the state directory to
 the requested projects and values. `selected-domain.json` also binds the actual
 domain read from Kahua, including when Doe selected it manually. A later resume
 in another domain stops before project lookup. Old attempt files are retained.
 
-The runner checks every project's identity and current flag before the first
-flag change. It returns to Home and uses **Select a Project > Search** for each
-lookup, including projects in nested partitions. It rejects scrollable, capped,
-or ambiguous result lists because their visible rows alone cannot prove that
-the name is unique.
+The runner returns to Home and uses **Select a Project > Search** for each
+lookup, including projects in nested partitions. To record a missing name it
+requires a stable, complete set of filtered results or an explicit empty-results
+message in the picker. An empty loading view, an unreadable search, multiple
+exact matches, or a scrollable or capped list stops the run.
 
 After changing a flag, the runner waits for Folders to become available and
 for Save and Cancel to stay disabled while Close is available. It then closes
@@ -342,7 +369,7 @@ readback must match before the batch continues. Reconciled receipts include
 `reconciled: true`; all recovery attempts and their errors are retained in
 `result.json` under `recoveries` and in `progress.log`.
 
-Changed identity/domain, duplicate or missing project names, sync errors,
+Changed identity/domain, duplicate project names, sync errors,
 unsaved-change warnings, unrecognized dialogs, and mismatched readbacks stop
 the run. They are not classified as temporary based on message text. If an
 outcome cannot be confirmed within the limit, it stays uncertain.
@@ -369,6 +396,13 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
 
 ## Validation and current limits
 
+- The row-by-row runner passed **217 simulated checks across eight suites**
+  locally in macOS PowerShell 7.6.9. All 20 PowerShell files parsed. The
+  fixtures exercised changed and already-correct switches, a missing middle
+  row, strict stopping before writes, reuse and refresh of a completed Check,
+  changed project numbers, and interrupted Saves. They also exercised the
+  picker reader with delayed results, explicit empty results, and unrelated
+  UI text. Live Windows picker behavior for this version awaits validation.
 - **November 6 Local Files context fix:** the supplied Check attempt
   `20261105T205104Z-45bbfe42` opened the first project, then stopped at
   `settings-open` because the active view had no `TitleText` named `My settings`.
@@ -383,8 +417,8 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
   Windows PowerShell `5.1.26100.33648` at commit `4be5fd7`.
   The controls are simulated; live Kahua validation remains pending for this fix.
   Close the settings dialog left open by this failed Check, then rerun the
-  updated launcher with the same CSV and batch history. It must pass Check
-  before offering APPLY.
+  updated runner with the same CSV and batch history. Use `-Mode Check` for
+  a read-only retry.
 - **November 6 project-open recovery fix:** the supplied production Check log
   stopped at `project-open` when `KahuaDesktop.psm1`'s `FindAll` raised a wrapped
   `ElementNotAvailableException`. Build `30725ef` had Local Files recovery but
@@ -392,8 +426,8 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
   the real control reader with a simulated provider, plus four full-selector
   regressions for stale header/picker reads, disabled recovery and an uncertain
   click. All 175 checks across seven platform-neutral suites pass on macOS
-  PowerShell 7.6.9; all 19 PowerShell files parse. The guided launcher also
-  verifies that `-RecoveryAttempts 0` reaches Check and both Execute selections.
+  PowerShell 7.6.9; all 19 PowerShell files parse. That version's guided launcher
+  fixture also verified that `-RecoveryAttempts 0` reached all three selections.
   [Windows CI run 42094873358](https://github.com/jaintj95/kahua-migration/actions/runs/42094873358)
   passed all **224 checks across ten suites** and parsed **19 scripts** in
   Windows PowerShell `5.1.26100.33648` at commit `5c8bc8a`, including the new
@@ -404,12 +438,12 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
   selection, then failed the settings-context check described above. That
   attempt did not complete Check or Execute and does not validate stale-read
   recovery. The earlier log does not establish why Kahua invalidated its element.
-- The launcher/history suite passes 20 simulated scenarios on macOS PowerShell
+- At commit `c098bfe`, the launcher/history suite passed 20 simulated scenarios on macOS PowerShell
   7.6.9 and Windows PowerShell 5.1, including
   automatic reuse, changed batches, preserved logs, legacy state, locks,
   corrupt bindings, interactive prompts, refusal after a failed Check, and a
   CSV changed during the APPLY prompt and Unicode history across retries.
-  The recovery suite passes 24 scenarios,
+  The recovery suite passed 24 scenarios,
   including a Save that persisted before its UI read failed, bounded stale
   reads, disabled recovery, unconfirmed outcomes, identity changes, warnings,
   and no repeated toggle/Save. [Windows CI run 42080880432](https://github.com/jaintj95/kahua-migration/actions/runs/42080880432)
@@ -421,7 +455,7 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
   version has not been verified. Hosted CI uses simulated controls and does
   not validate the client's actual UI selectors or repair its sync-name conflict.
 - Doe's five-row CSV passed Plan for both Enable and Disable.
-- The suite passes 55 scenarios under local PowerShell 7.6.9 and Windows
+- An earlier flag-runner build passed 55 scenarios under local PowerShell 7.6.9 and Windows
   PowerShell 5.1, covering input validation, strict boolean
   handling, exact-name matching, preflight, reruns, Disable, uncertain saves,
   mismatched receipts, state locking, partial selections, paused accounts, and
@@ -429,7 +463,7 @@ up project files and never claims to diagnose Kahua's transfer mechanism.
   refusal of ambiguous or incomplete search results, transient disabled
   controls during Save, unsettled saves, and late unsaved-change warnings.
   Logging checks cover console/file output, failure context, preserved prior
-  logs, Unicode names, and rate-limited wait messages. A separate suite passes
+  logs, Unicode names, and rate-limited wait messages. A separate suite passed
   16 geometry/read scenarios covering incomplete rectangles, expired controls,
   fresh breadcrumb lookup, temporarily absent breadcrumbs, deadline handling,
   and unrelated errors. Another 18 environment identity checks cover unlabelled

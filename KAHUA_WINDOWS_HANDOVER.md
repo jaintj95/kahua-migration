@@ -26,21 +26,25 @@ all five projects passed a live read-only Check, including nested projects.
 A separate test CSV corrected `222 - Bellevue Park` to Kahua's exact name
 `221 - Bellevue Park`; Doe's original CSV is preserved.
 
-The guided `Start-SyncFlags.cmd` launcher now manages history automatically,
-checks the reviewed batch before APPLY, and retains the explicit `StateRoot`
-option for legacy runs. Recognized temporary reads get bounded recovery;
-Save reconciliation never repeats a toggle or Save. Local simulated launcher
-and recovery checks pass, and [Windows CI](https://github.com/jaintj95/kahua-migration/actions/runs/42108994927)
-passed all 247 fixture checks across eleven suites and parsed 20 scripts in
+The guided `Start-SyncFlags.cmd` launcher manages history automatically and
+retains the explicit `StateRoot` option for legacy runs. In the
+row-by-row version, APPLY starts Execute after the operator reviews the plan.
+Execute skips confirmed missing names and reuses a completed Check for the
+same batch. Use `-CheckFirst -OnMissing Stop` to reject a batch with a
+missing name in its whole-list review. The runbook tracks validation of this
+version. [Row-by-row validation](SYNC_FLAGS.md#validation-and-current-limits)
+
+On the earlier settings-context build, Windows CI passed all 247 fixture
+checks across eleven suites and parsed 20 scripts in
 Windows PowerShell 5.1 at commit `4be5fd7`. Archive `30725ef` was extracted on the supervised VM on November 6
 and reached the CSV prompt; a completed live Check/Execute of that version has
 not been verified. The November 6 fixes cover stale project-open reads and the
-incorrect settings-menu lookup reported during Check. They pass 198 local
-simulated checks across eight suites and the Windows CI run above; the latest
-settings-context fix has not been deployed or validated against the live
-Windows client. The production same-name sync conflict remains an
-application issue; automatic history does not resolve it. See
-[the current limits and recovery rules](SYNC_FLAGS.md#bounded-recovery).
+incorrect settings-menu lookup reported during Check. That build passed 198
+local simulated checks across eight suites. Live Windows validation of the
+settings-context fix remains pending. The production same-name sync conflict
+remains a separate application issue. See
+[the settings-context CI run](https://github.com/jaintj95/kahua-migration/actions/runs/42108994927)
+and [the current limits and recovery rules](SYNC_FLAGS.md#bounded-recovery).
 
 After the user returned VM access, the corrected runner completed Seattle
 **On to Off at 02:02:01 IST, then Off to On at 02:03:11 IST on November 5**.
