@@ -67,9 +67,7 @@ function Wait-KahuaFlagFolders {
         # A duplicate-name warning appears asynchronously while Local Files
         # loads. Report it before accepting any background Folders control.
         Assert-KahuaFlagNoSyncError
-        $matches = @(Find-KahuaControl -Name Folders -Type Button -All)
-        if ($matches.Count -gt 1) { throw 'Ambiguous Folders control in Local Files.' }
-        if ($matches.Count -eq 1 -and $matches[0].Current.IsEnabled) { return }
+        if ($null -ne (Get-KahuaRootFlagToggle -AllowDisabled -AllowMissing)) { return }
         if ([DateTime]::UtcNow -ge $deadline) {
             $failure=[TimeoutException]::new('Timed out waiting for the Local Files Folders control.')
             $failure.Data['KahuaFlagReadTimeout']=$true
@@ -303,9 +301,10 @@ function Assert-KahuaFlagProject {
 }
 
 function Get-KahuaRootFlagToggle {
-    param([switch]$AllowDisabled)
+    param([switch]$AllowDisabled,[switch]$AllowMissing)
     # The row named Folders represents only the selected project's file tree.
     # Never click Folders to drill down or Change to select a parent/child project.
+    # Kahua can expose both the switch and the folder link as Folders buttons.
     $buttons = @(Find-KahuaControl -Name Folders -Type Button -All)
     $toggles = @()
     foreach ($button in $buttons) {
@@ -319,6 +318,7 @@ function Get-KahuaRootFlagToggle {
             Where-Object { $_.GetSupportedPatterns() -contains [Windows.Automation.TogglePattern]::Pattern })
     }
     $toggles = @(Select-KahuaUniqueElement $toggles)
+    if ($toggles.Count -eq 0 -and $AllowMissing) { return $null }
     if ($toggles.Count -ne 1) { throw "Expected the selected project's single Folders switch; found $($toggles.Count). Reopen Local Files at the project root." }
     if ($toggles[0].Current.IsOffscreen) { throw 'The project Folders switch is unavailable.' }
     if (-not $toggles[0].Current.IsEnabled) {

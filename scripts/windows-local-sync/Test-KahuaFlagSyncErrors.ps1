@@ -2,10 +2,22 @@
 # Exercise error detection and asynchronous folder loading without Kahua.
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
+Add-Type @'
+namespace System.Windows.Automation {
+    public class ControlType { public static readonly string DataItem="DataItem"; }
+    public class TreeWalker { public static object ControlViewWalker; }
+    public class TreeScope { public static readonly string Descendants="Descendants"; }
+    public class Condition { public static readonly string TrueCondition="True"; }
+    public class TogglePattern { public static readonly string Pattern="Toggle"; }
+}
+'@
+$walker=[pscustomobject]@{}
+$walker | Add-Member ScriptMethod GetParent { param($Control) $Control.parent }
+[Windows.Automation.TreeWalker]::ControlViewWalker=$walker
 $tokens=$null; $parseErrors=$null
 $ast=[System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'KahuaSyncFlagDesktop.psm1'),[ref]$tokens,[ref]$parseErrors)
 if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
-foreach ($name in @('Assert-KahuaFlagNoSyncError','Wait-KahuaFlagFolders','Initialize-KahuaFlagDomain','Open-KahuaFlagSettings')) {
+foreach ($name in @('Assert-KahuaFlagNoSyncError','Wait-KahuaFlagFolders','Get-KahuaRootFlagToggle','Initialize-KahuaFlagDomain','Open-KahuaFlagSettings')) {
     $definition=$ast.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
     . ([scriptblock]::Create($definition.Extent.Text))
 }
@@ -18,6 +30,19 @@ function Expect-Error([scriptblock]$Call,[string]$Pattern) {
 function New-Control([string]$Name,[bool]$Enabled=$true) {
     [pscustomobject]@{Current=[pscustomobject]@{Name=$Name;IsEnabled=$Enabled}}
 }
+function New-FolderButtons([int]$ToggleCount=1,[bool]$Enabled=$true) {
+    $row=[pscustomobject]@{Current=[pscustomobject]@{ControlType='DataItem'};children=@()}
+    $row | Add-Member ScriptMethod FindAll { param($Scope,$Condition) $this.children }
+    for ($index=0; $index -le $ToggleCount; $index++) {
+        $button=[pscustomobject]@{parent=$row;id=$index;hasToggle=($index -gt 0);
+            Current=[pscustomobject]@{ControlType='Button';Name='Folders';IsEnabled=$Enabled;IsOffscreen=$false}}
+        $button | Add-Member ScriptMethod GetSupportedPatterns { if ($this.hasToggle) { 'Toggle' } }
+        $button | Add-Member ScriptMethod GetCurrentPattern { param($Pattern) [pscustomobject]@{Id=$this.id} }
+        $row.children+=$button
+    }
+    $row.children
+}
+function Select-KahuaUniqueElement { param($Elements) $Elements | Sort-Object -Property id -Unique }
 function Reset-Fixture {
     $script:titles=@(); $script:details=@(); $script:folders=@()
     $script:windowReads=0; $script:folderReads=0; $script:detailReads=0
@@ -39,7 +64,7 @@ function Find-KahuaControl {
     }
     Assert ($Name -ceq 'Folders') 'Unexpected navigation or control lookup'
     $script:folderReads++
-    if ($script:lateFolders -and $script:folderReads -gt 1) { return (New-Control 'Folders') }
+    if ($script:lateFolders -and $script:folderReads -gt 1) { return (New-FolderButtons) }
     return $script:folders
 }
 function Get-KahuaControlName { param($Control) $Control.Current.Name }
@@ -72,9 +97,9 @@ $passed++
 Reset-Fixture; $script:providerError='Provider read failed'
 Expect-Error { Assert-KahuaFlagNoSyncError } 'Provider read failed'
 $passed++
-Reset-Fixture; $script:folders=@(New-Control 'Folders')
+Reset-Fixture; $script:folders=@(New-FolderButtons)
 Wait-KahuaFlagFolders -TimeoutSeconds 0
-Assert ($script:folderReads -eq 1) 'Ready folder was not accepted'
+Assert ($script:folderReads -eq 1 -and (Get-KahuaRootFlagToggle).Id -eq 1) 'The ready switch was not distinguished from the identically named folder link'
 $passed++
 Reset-Fixture; $script:lateFolders=$true
 Wait-KahuaFlagFolders -TimeoutSeconds 2
@@ -85,7 +110,7 @@ Expect-Error { Wait-KahuaFlagFolders -TimeoutSeconds 2 } 'same name is already s
 Assert ($script:folderReads -eq 1) 'A control read occurred behind the new error'
 $passed++
 Reset-Fixture; $script:titles=@(New-Control 'Unable to sync'); $script:details=@(New-Control $duplicate)
-$script:folders=@(New-Control 'Folders')
+$script:folders=@(New-FolderButtons)
 Expect-Error { Wait-KahuaFlagFolders } 'same name is already synced'
 Assert ($script:folderReads -eq 0) 'Background Folders control hid the sync error'
 $passed++
@@ -95,8 +120,8 @@ Expect-Error { Open-KahuaFlagSettings -Identity ([pscustomobject]@{}) } 'same na
 $passed++
 foreach ($count in @(0,1,2)) {
     Reset-Fixture
-    $script:folders=@(1..2 | Select-Object -First $count | ForEach-Object { New-Control 'Folders' $false })
-    $pattern=if ($count -eq 2) { 'Ambiguous Folders' } else { 'Timed out waiting' }
+    $script:folders=@(New-FolderButtons -ToggleCount $count -Enabled $false)
+    $pattern=if ($count -eq 2) { 'single Folders switch; found 2' } else { 'Timed out waiting' }
     Expect-Error { Wait-KahuaFlagFolders -TimeoutSeconds 0 } $pattern
     $passed++
 }
