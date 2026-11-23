@@ -73,16 +73,22 @@ function Find-KahuaControl {
             }
         }
         default {
-            Assert ($script:fixture.view -eq 'local-files') 'Read occurred outside Local Files'
-            if ($Name -in @('Save','Cancel')) {
+            if ($Name -ceq 'My settings') {
+                Assert ($Type -eq 'Button' -and $All -and $script:fixture.view -eq 'account') 'Wrong Account drawer button selector'
+                if ($script:fixture.fault -ne 'legacy-menu') { $matches=@(New-Control 'settings-button') }
+                if ($script:fixture.fault -eq 'duplicate-menu') { $matches+=New-Control 'settings-button' }
+            } elseif ($Name -in @('Save','Cancel')) {
+                Assert ($script:fixture.view -eq 'local-files') 'Read occurred outside Local Files'
                 Assert ($Type -eq 'Button') 'Wrong settings button type'
                 $key=if ($Name -eq 'Save') { 'saveChecks' } else { 'cancelChecks' }
                 $script:fixture[$key]++
                 if ($script:fixture.fault -ne ('missing-'+$Name.ToLowerInvariant())) { $matches=@(New-Control $Name) }
             } elseif ($Name -eq 'Change') {
+                Assert ($script:fixture.view -eq 'local-files') 'Read occurred outside Local Files'
                 Assert ($Type -eq 'Button') 'Wrong project selector type'
                 $matches=@($script:change)
             } else {
+                Assert ($script:fixture.view -eq 'local-files') 'Read occurred outside Local Files'
                 Assert ($Name -ceq '0002 - Exact project' -and $Type -eq 'Text' -and $Root -and $All) 'The requested project identity was lost'
                 if ([object]::ReferenceEquals($Root,$script:project) -and $script:fixture.fault -ne 'wrong-local-project') {
                     $matches=@(New-Control 'exact-project')
@@ -100,9 +106,16 @@ function Wait-KahuaControl {
 }
 function Invoke-KahuaControl {
     param($Control,[switch]$Click)
-    if ($Control.role -notin @('account','settings','local-files')) { throw 'Context verification must never toggle, Save, cancel, close or dismiss a dialog' }
-    $script:fixture.navigation+=($Control.role)
-    $script:fixture.view=$Control.role
+    $role=$Control.role
+    if ($role -eq 'settings-button') {
+        Assert (-not $Click) 'The My settings button must use Invoke instead of a coordinate click'
+        $role='settings'
+    } elseif ($role -eq 'settings') {
+        Assert ($Click -and $script:fixture.fault -eq 'legacy-menu') 'Only the legacy text control should use a coordinate click'
+    }
+    if ($role -notin @('account','settings','local-files')) { throw 'Context verification must never toggle, Save, cancel, close or dismiss a dialog' }
+    $script:fixture.navigation+=$role
+    $script:fixture.view=$role
 }
 function Assert-KahuaFlagProject {
     param($Identity)
@@ -145,6 +158,13 @@ Reset-Fixture
 $state=Open-KahuaFlagSettings -Identity $identity
 Assert ($state -ceq 'running' -and ($script:fixture.navigation -join ',') -ceq 'account,settings,local-files') 'Settings did not open once with the menu entry absent afterwards'
 Assert ($script:fixture.folderReads -eq 1 -and $script:fixture.saveChecks -eq 1 -and $script:fixture.cancelChecks -eq 1) 'Local Files controls were not verified'
+$passed++
+Reset-Fixture 'legacy-menu'
+Assert ((Open-KahuaFlagSettings -Identity $identity) -ceq 'running') 'The legacy Account drawer did not open settings'
+$passed++
+Reset-Fixture 'duplicate-menu'
+Expect-Error { Open-KahuaFlagSettings -Identity $identity } 'Ambiguous My settings buttons'
+Assert (($script:fixture.navigation -join ',') -ceq 'account') 'An ambiguous menu button was activated'
 $passed++
 foreach ($fault in @('','paused')) {
     Reset-Fixture $fault 'local-files'

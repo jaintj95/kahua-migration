@@ -337,7 +337,16 @@ function Open-KahuaFlagSettings {
     Assert-KahuaFlagNoSyncError
     if (@(Find-KahuaControl -Id CloseModal -Type Button -All).Count) { throw 'Close the existing settings/dialog before continuing.' }
     Invoke-KahuaControl (Find-KahuaControl -Id Shell_Settings -Type Button)
-    Invoke-KahuaControl (Wait-KahuaControl -Id TitleText -Name 'My settings' -Type Text) -Click
+    Write-KahuaFlagProgress $LogContext 'settings-menu' 'Opening My settings from the Account drawer.'
+    $menuLabel = Wait-KahuaControl -Id TitleText -Name 'My settings' -Type Text
+    $menuButtons = @(Find-KahuaControl -Name 'My settings' -Type Button -All)
+    if ($menuButtons.Count -gt 1) { throw 'Ambiguous My settings buttons in the Account drawer.' }
+    if ($menuButtons.Count -eq 1) {
+        Invoke-KahuaControl $menuButtons[0]
+    } else {
+        Invoke-KahuaControl $menuLabel -Click
+    }
+    Write-KahuaFlagProgress $LogContext 'settings-local-files' 'Selecting the Local Files tab.'
     Invoke-KahuaControl (Wait-KahuaControl -Id ButtonText -Name 'Local Files' -Type Text) -Click
     return (Invoke-KahuaFlagReadRecovery -RecoveryAttempts $RecoveryAttempts -LogContext $LogContext -Operation 'Waiting for Local Files' -Read {
         Read-KahuaFlagSettingsContext -Identity $Identity -LogContext $LogContext
