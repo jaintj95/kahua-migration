@@ -10,6 +10,7 @@ if ('System.Windows.Automation.TreeWalker' -as [type]) {
 Add-Type @'
 namespace System.Windows.Automation {
     public class ControlType { public static readonly string Window="Window"; }
+    public class SelectionItemPattern { public static readonly string Pattern="SelectionItem"; }
     public class TreeWalker { public static object RawViewWalker; }
     public class ElementNotAvailableException : System.Exception {
         public ElementNotAvailableException(string message) : base(message) { }
@@ -22,7 +23,7 @@ $walker | Add-Member ScriptMethod GetParent { param($Control) return $Control.pa
 $tokens=$null; $errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'KahuaSyncFlagDesktop.psm1'),[ref]$tokens,[ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-foreach ($name in @('Open-KahuaFlagSettings','Read-KahuaFlagSettingsContext','Confirm-KahuaFlagAfterSave')) {
+foreach ($name in @('Open-KahuaFlagSettings','Get-KahuaFlagSettingsFooter','Read-KahuaFlagSettingsContext','Confirm-KahuaFlagAfterSave')) {
     $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
     . ([scriptblock]::Create($definition.Extent.Text))
 }
@@ -33,7 +34,7 @@ function Expect-Error([scriptblock]$Call,[string]$Pattern) {
     Assert ($null -ne $failure -and $failure.Exception.Message -match $Pattern) "Expected '$Pattern', got '$failure'"
 }
 function New-Control([string]$Role,$Parent=$null) {
-    [pscustomobject]@{role=$Role;parent=$Parent;Current=[pscustomobject]@{ControlType='Group';IsEnabled=$true}}
+    [pscustomobject]@{role=$Role;parent=$Parent;Current=[pscustomobject]@{ControlType='Group';IsEnabled=$true;AutomationId=''}}
 }
 function Reset-Fixture([string]$Fault='',[string]$View='project') {
     $script:fixture=@{fault=$Fault;view=$View;navigation=@();modalReads=0;guards=0;folderReads=0;closes=0;readbacks=0;waits=0;saveChecks=0;cancelChecks=0}
@@ -62,6 +63,7 @@ function Find-KahuaControl {
         }
         'CloseModal' {
             Assert ($Type -eq 'Button') 'Wrong modal selector'
+            if ($script:fixture.view -eq 'settings') { $matches=@(New-Control 'close') }
             if ($script:fixture.view -eq 'local-files') {
                 $script:fixture.modalReads++
                 if ($script:fixture.fault -eq 'always-stale' -or
@@ -77,12 +79,36 @@ function Find-KahuaControl {
                 Assert ($Type -eq 'Button' -and $All -and $script:fixture.view -eq 'account') 'Wrong Account drawer button selector'
                 if ($script:fixture.fault -ne 'legacy-menu') { $matches=@(New-Control 'settings-button') }
                 if ($script:fixture.fault -eq 'duplicate-menu') { $matches+=New-Control 'settings-button' }
+            } elseif ($Name -ceq 'kahua.ktree.filesync.FileSyncViewModel') {
+                Assert ($Type -eq 'TabItem' -and $All -and $script:fixture.view -eq 'settings') 'Wrong Local Files tab selector'
+                if ($script:fixture.fault -eq 'modern-settings') {
+                    $tab=New-Control 'local-files'
+                    $tab | Add-Member ScriptMethod TryGetCurrentPattern {
+                        param($Pattern,[ref]$Selection)
+                        Assert ($Pattern -ceq 'SelectionItem') 'Wrong tab selection pattern'
+                        $patternFixture=[pscustomobject]@{Current=[pscustomobject]@{IsSelected=$false}}
+                        $patternFixture | Add-Member ScriptMethod Select {
+                            $script:fixture.navigation+='local-files'
+                            $script:fixture.view='local-files'
+                        }
+                        $Selection.Value=$patternFixture
+                        return $true
+                    }
+                    $matches=@($tab)
+                }
             } elseif ($Name -in @('Save','Cancel')) {
                 Assert ($script:fixture.view -eq 'local-files') 'Read occurred outside Local Files'
                 Assert ($Type -eq 'Button') 'Wrong settings button type'
                 $key=if ($Name -eq 'Save') { 'saveChecks' } else { 'cancelChecks' }
                 $script:fixture[$key]++
-                if ($script:fixture.fault -ne ('missing-'+$Name.ToLowerInvariant())) { $matches=@(New-Control $Name) }
+                if ($script:fixture.fault -ne ('missing-'+$Name.ToLowerInvariant()) -and
+                    -not ($Name -eq 'Cancel' -and $script:fixture.fault -eq 'modern-settings')) { $matches=@(New-Control $Name) }
+            } elseif ($Name -ceq 'Close') {
+                Assert ($Type -eq 'Button' -and $All -and $script:fixture.view -eq 'local-files') 'Wrong footer Close selector'
+                $header=New-Control 'header-close'
+                $header.Current.AutomationId='CloseModal'
+                $matches=@($header)
+                if ($script:fixture.fault -eq 'modern-settings') { $matches+=New-Control 'footer-close' }
             } elseif ($Name -eq 'Change') {
                 Assert ($script:fixture.view -eq 'local-files') 'Read occurred outside Local Files'
                 Assert ($Type -eq 'Button') 'Wrong project selector type'
@@ -107,6 +133,7 @@ function Wait-KahuaControl {
 function Invoke-KahuaControl {
     param($Control,[switch]$Click)
     $role=$Control.role
+    Assert ($role -ne 'local-files' -or $script:fixture.fault -ne 'modern-settings') 'The production tab must use its selection pattern'
     if ($role -eq 'settings-button') {
         Assert (-not $Click) 'The My settings button must use Invoke instead of a coordinate click'
         $role='settings'
@@ -162,6 +189,9 @@ $passed++
 Reset-Fixture 'legacy-menu'
 Assert ((Open-KahuaFlagSettings -Identity $identity) -ceq 'running') 'The legacy Account drawer did not open settings'
 $passed++
+Reset-Fixture 'modern-settings'
+Assert ((Open-KahuaFlagSettings -Identity $identity) -ceq 'running' -and ($script:fixture.navigation -join ',') -ceq 'account,settings,local-files') 'The production tab and Close footer did not open and verify settings'
+$passed++
 Reset-Fixture 'duplicate-menu'
 Expect-Error { Open-KahuaFlagSettings -Identity $identity } 'Ambiguous My settings buttons'
 Assert (($script:fixture.navigation -join ',') -ceq 'account') 'An ambiguous menu button was activated'
@@ -177,7 +207,7 @@ foreach ($case in @(
     @('wrong-environment','wrong-environment'),@('wrong-domain','wrong-domain'),@('wrong-header','wrong-header'),
     @('sync-warning','same name already synced'),@('unsaved-warning','Unsaved Changes Alert'),
     @('missing-modal',"id='CloseModal'.*found 0"),@('duplicate-modal',"id='CloseModal'.*found 2"),
-    @('missing-save',"name='Save'.*found 0"),@('missing-cancel',"name='Cancel'.*found 0"),
+    @('missing-save',"name='Save'.*found 0"),@('missing-cancel','footer Close button when Cancel is absent'),
     @('unconfigured','Enable Local Files for the account manually'),@('wrong-local-project','different project'),
     @('missing-folders','Local Files Folders control')
 )) {

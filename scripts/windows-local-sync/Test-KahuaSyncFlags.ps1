@@ -392,7 +392,7 @@ Remove-Module $adapterHarness
 
 # A disabled Save can be a transient in-flight state. Exercise the real wait
 # and close guards with a pending/dirty/settled sequence and a late warning.
-$saveFunctions=@('Assert-KahuaFlagNoUnsavedWarning','Wait-KahuaFlagSave','Close-KahuaFlagSettings') | ForEach-Object {
+$saveFunctions=@('Assert-KahuaFlagNoUnsavedWarning','Get-KahuaFlagSettingsFooter','Wait-KahuaFlagSave','Close-KahuaFlagSettings') | ForEach-Object {
     $name=$_
     $ast.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true).Extent.Text
 }
@@ -411,9 +411,17 @@ $saveHarness=New-Module -Name KahuaFlagSaveFixture -ArgumentList ($saveFunctions
         if ($Name -eq 'Save') { $script:reads++ }
         $enabled=$false
         if ($Name -eq 'Save') { $enabled=$script:mode -eq 'pending' -or ($script:mode -eq 'transient' -and $script:reads -eq 2) }
-        if ($Name -eq 'Cancel') { $enabled=$script:mode -eq 'cancel-pending' -or ($script:mode -eq 'transient' -and $script:reads -le 2) }
+        if ($Name -eq 'Cancel') {
+            if ($script:mode -in @('footer-close','footer-disabled','footer-transition')) { return }
+            $enabled=$script:mode -eq 'cancel-pending' -or ($script:mode -eq 'transient' -and $script:reads -le 2)
+        }
+        if ($Name -eq 'Close') {
+            [pscustomobject]@{Current=[pscustomobject]@{AutomationId='CloseModal';IsEnabled=$true}}
+            if ($script:mode -eq 'footer-transition' -and $script:reads -le 2) { return }
+            $enabled=$script:mode -ne 'footer-disabled'
+        }
         if ($Id -eq 'CloseModal') { $enabled=$true }
-        [pscustomobject]@{Current=[pscustomobject]@{IsEnabled=$enabled}}
+        [pscustomobject]@{Current=[pscustomobject]@{AutomationId=$Id;IsEnabled=$enabled}}
     }
     function Get-KahuaRootFlagToggle {
         param([switch]$AllowDisabled)
@@ -436,7 +444,15 @@ Reset-SaveFixture disabled-then-ready
 Wait-KahuaFlagSave -Desired On -TimeoutSeconds 5 -SettledMilliseconds 500
 Assert ((Get-SaveFixture).reads -ge 5) 'Temporarily disabled Folders was accepted as settled or failed the wait'
 $passed++
-foreach ($mode in @('pending','cancel-pending','disabled')) {
+Reset-SaveFixture footer-close
+Wait-KahuaFlagSave -Desired On -TimeoutSeconds 5 -SettledMilliseconds 500
+Assert ((Get-SaveFixture).reads -ge 3 -and (Get-SaveFixture).clicks -eq 0) 'The settled Close footer was not verified without clicking'
+$passed++
+Reset-SaveFixture footer-transition
+Wait-KahuaFlagSave -Desired On -TimeoutSeconds 5 -SettledMilliseconds 500
+Assert ((Get-SaveFixture).reads -ge 5 -and (Get-SaveFixture).clicks -eq 0) 'The wait did not tolerate a brief gap before the Close footer appeared'
+$passed++
+foreach ($mode in @('pending','cancel-pending','disabled','footer-disabled')) {
     Reset-SaveFixture $mode
     Expect-Error { Wait-KahuaFlagSave -Desired On -TimeoutSeconds 0 -SettledMilliseconds 500 } 'did not settle'
     Assert ((Get-SaveFixture).clicks -eq 0) 'Unsettled Save caused another UI action'

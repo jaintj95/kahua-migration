@@ -347,10 +347,35 @@ function Open-KahuaFlagSettings {
         Invoke-KahuaControl $menuLabel -Click
     }
     Write-KahuaFlagProgress $LogContext 'settings-local-files' 'Selecting the Local Files tab.'
-    Invoke-KahuaControl (Wait-KahuaControl -Id ButtonText -Name 'Local Files' -Type Text) -Click
+    [void](Wait-KahuaControl -Id CloseModal -Type Button)
+    $tabs = @(Find-KahuaControl -Name 'kahua.ktree.filesync.FileSyncViewModel' -Type TabItem -All)
+    if ($tabs.Count -gt 1) { throw 'Ambiguous Local Files tabs in My settings.' }
+    if ($tabs.Count -eq 1) {
+        $selection = $null
+        if ($tabs[0].Current.IsEnabled -and $tabs[0].TryGetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern, [ref]$selection)) {
+            if (-not $selection.Current.IsSelected) { $selection.Select() }
+        } else {
+            Invoke-KahuaControl $tabs[0]
+        }
+    } else {
+        Invoke-KahuaControl (Wait-KahuaControl -Id ButtonText -Name 'Local Files' -Type Text) -Click
+    }
     return (Invoke-KahuaFlagReadRecovery -RecoveryAttempts $RecoveryAttempts -LogContext $LogContext -Operation 'Waiting for Local Files' -Read {
         Read-KahuaFlagSettingsContext -Identity $Identity -LogContext $LogContext
     })
+}
+
+function Get-KahuaFlagSettingsFooter {
+    param([switch]$AllowPending)
+    $cancel = @(Find-KahuaControl -Name Cancel -Type Button -All)
+    if ($cancel.Count -gt 1) { throw 'Ambiguous Cancel buttons in Local Files.' }
+    if ($cancel.Count -eq 1) { return [pscustomobject]@{Cancel=$cancel[0];Close=$null} }
+    # With no pending edits, newer clients show a footer Close instead of Cancel.
+    # Exclude the separate CloseModal button in the dialog header.
+    $close = @(Find-KahuaControl -Name Close -Type Button -All | Where-Object { $_.Current.AutomationId -ne 'CloseModal' })
+    if ($close.Count -eq 0 -and $AllowPending) { return [pscustomobject]@{Cancel=$null;Close=$null} }
+    if ($close.Count -ne 1) { throw 'Expected one Local Files footer Close button when Cancel is absent.' }
+    return [pscustomobject]@{Cancel=$null;Close=$close[0]}
 }
 
 function Read-KahuaFlagSettingsContext {
@@ -368,7 +393,7 @@ function Read-KahuaFlagSettingsContext {
     $state = Wait-KahuaLocalFilesState
     if ($state -eq 'unconfigured') { throw 'Enable Local Files for the account manually once, then rerun. The project flag runner never initializes or resets account sync.' }
     [void](Find-KahuaControl -Name Save -Type Button)
-    [void](Find-KahuaControl -Name Cancel -Type Button)
+    [void](Get-KahuaFlagSettingsFooter)
     Write-KahuaFlagProgress $LogContext 'settings-project' "Account sync=$state. Verifying the project shown in Local Files."
     $change = Wait-KahuaControl -Name Change -Type Button
     $container = $change; $matched = $false
@@ -391,7 +416,7 @@ function Assert-KahuaFlagNoUnsavedWarning {
 
 function Wait-KahuaFlagSave {
     param([string]$Desired, [int]$TimeoutSeconds = 30, [int]$SettledMilliseconds = 2000,[hashtable]$LogContext)
-    Write-KahuaFlagProgress $LogContext 'save-wait' "Waiting for Save/Cancel/Close and Folders to settle (up to ${TimeoutSeconds}s)."
+    Write-KahuaFlagProgress $LogContext 'save-wait' "Waiting for the Local Files controls and Folders to settle (up to ${TimeoutSeconds}s)."
     # Save is disabled while the request is in flight as well as after it
     # finishes. One disabled sample is not evidence that closing is safe.
     $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -400,13 +425,14 @@ function Wait-KahuaFlagSave {
         Assert-KahuaFlagNoSyncError
         Assert-KahuaFlagNoUnsavedWarning
         $save = Find-KahuaControl -Name Save -Type Button
-        $cancel = Find-KahuaControl -Name Cancel -Type Button
+        $footer = Get-KahuaFlagSettingsFooter -AllowPending
+        $footerSettled = if ($footer.Cancel) { -not $footer.Cancel.Current.IsEnabled } else { $footer.Close -and $footer.Close.Current.IsEnabled }
         $close = Find-KahuaControl -Id CloseModal -Type Button
         $toggle = Get-KahuaRootFlagToggle -AllowDisabled
         if ($null -ne $toggle -and $toggle.Current.ToggleState.ToString() -cne $Desired) {
             throw 'Project sync selection changed during Save. The result is uncertain; inspect the settings before resuming.'
         }
-        if ($null -ne $toggle -and -not $save.Current.IsEnabled -and -not $cancel.Current.IsEnabled -and $close.Current.IsEnabled) {
+        if ($null -ne $toggle -and -not $save.Current.IsEnabled -and $footerSettled -and $close.Current.IsEnabled) {
             if ($null -eq $quietSince) { $quietSince = $watch.ElapsedMilliseconds }
             if ($watch.ElapsedMilliseconds - $quietSince -ge $SettledMilliseconds) {
                 Write-KahuaFlagProgress $LogContext 'save-settled' 'Save controls settled; the saved switch still needs reopened verification.'
@@ -418,7 +444,7 @@ function Wait-KahuaFlagSave {
             $failure.Data['KahuaFlagReadTimeout']=$true
             throw $failure
         }
-        Write-KahuaFlagProgress $LogContext 'save-wait' "Still waiting: Save enabled=$($save.Current.IsEnabled); Cancel enabled=$($cancel.Current.IsEnabled); Folders available=$($null -ne $toggle)." -Heartbeat
+        Write-KahuaFlagProgress $LogContext 'save-wait' "Still waiting: Save enabled=$($save.Current.IsEnabled); footer settled=$footerSettled; Folders available=$($null -ne $toggle)." -Heartbeat
         Start-Sleep -Milliseconds 250
     } while ($true)
 }
