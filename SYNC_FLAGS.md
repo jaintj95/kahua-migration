@@ -220,6 +220,13 @@ same CSV. Automatic history chooses a separate batch for the opposite action:
 For a `sync_enabled` CSV, use `-Action FromCsv`. Plan is the default mode when
 `-Mode` is omitted; a mode must be changed to Execute before flags are written.
 
+To apply each project in CSV order without a separate preflight pass over the
+entire batch, run with `-Mode Execute -ApplyAsYouGo`. The runner checks each
+project's identity and current settings before changing its switch, then
+reopens settings to verify the result. If a project fails, earlier verified
+changes remain saved and later projects stay untouched. Retry with the same
+command to check the switches again and avoid saving already-correct values.
+
 ### Production commands
 
 Use the current repository version containing `Start-SyncFlags.cmd` and the
@@ -302,8 +309,8 @@ the requested projects and values. `selected-domain.json` also binds the actual
 domain read from Kahua, including when Doe selected it manually. A later resume
 in another domain stops before project lookup. Old attempt files are retained.
 
-The runner checks every project's identity and current flag before the first
-flag change. It returns to Home and uses **Select a Project > Search** for each
+By default, the runner checks every project's identity and current flag before
+the first flag change. It returns to Home and uses **Select a Project > Search** for each
 lookup, including projects in nested partitions. It rejects scrollable, capped,
 or ambiguous result lists because their visible rows alone cannot prove that
 the name is unique.

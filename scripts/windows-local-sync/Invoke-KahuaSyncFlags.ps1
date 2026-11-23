@@ -10,6 +10,7 @@ param(
     [string]$Domain,
     [ValidateSet('Enable','Disable','FromCsv')][string]$Action = 'FromCsv',
     [ValidateSet('Plan','Check','Execute')][string]$Mode = 'Plan',
+    [switch]$ApplyAsYouGo,
     [string]$StateRoot,
     [string]$HistoryRoot,
     [ValidateRange(0,3)][int]$RecoveryAttempts = 2,
@@ -24,7 +25,7 @@ $log = New-KahuaFlagLogContext -Mode $Mode
 $lock = $null; $mutex = $null; $ownsMutex = $false; $current = $null
 $attemptRoot = $null
 $attempt = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8)
-$report = [ordered]@{schema=1;attempt=$attempt;mode=$Mode;status='validating';
+$report = [ordered]@{schema=1;attempt=$attempt;mode=$Mode;apply_as_you_go=[bool]$ApplyAsYouGo;status='validating';
     started_at_utc=[DateTime]::UtcNow.ToString('o');scope='project-files';
     transfer_verified=$false;projects=@()}
 function Save-FlagReport {
@@ -35,6 +36,7 @@ function Save-FlagReport {
     Write-KahuaFlagJson (Join-Path $attemptRoot 'result.json') $report
 }
 try {
+    if ($ApplyAsYouGo -and $Mode -ne 'Execute') { throw '-ApplyAsYouGo requires -Mode Execute.' }
     Write-KahuaFlagProgress $log 'validate' "Starting $Mode / $Action in $Environment. CSV: $CsvPath"
     $rows = @(Read-KahuaSyncFlagCsv -CsvPath $CsvPath -Environment $Environment -Domain $Domain -Action $Action)
     $inputHash=Get-KahuaFlagInputHash -Rows $rows
@@ -105,38 +107,44 @@ try {
     Write-KahuaFlagProgress $log 'domain' "Verified environment=$Environment; domain=$actualDomain. Checking saved domain binding."
     Set-KahuaFlagDomainBinding -StateRoot $state -Rows $rows -ActualDomain $actualDomain
     foreach ($entry in $report.projects) { $entry.domain=$actualDomain }
-    $report.status = 'checking'; Save-FlagReport
-    $log.Phase='Preflight'
     $identities = @{}
-    # Resolve and inspect the entire list before the first setting change.
-    # Lookup errors found here stop before any project flag is changed.
-    for ($i=0; $i -lt $rows.Count; $i++) {
-        $row = $rows[$i]; $current = $report.projects[$i]
-        $log.Index=$i+1; $log.Project=$row.project_name
-        Write-KahuaFlagProgress $log 'project' 'Checking identity and current Folders switch before any changes.'
-        $current.status = 'checking'; Save-FlagReport
-        $identity = Select-KahuaFlagProject -Environment $Environment -Domain $row.domain -Name $row.project_name -LogContext $log -RecoveryAttempts $RecoveryAttempts
-        Write-KahuaFlagProgress $log 'read' 'Reading Local Files and reopening settings to confirm the current switch.'
-        $receipt = Get-KahuaProjectFlag -Identity $identity -LogContext $log -RecoveryAttempts $RecoveryAttempts
-        Assert-KahuaSyncFlagReceipt -Receipt $receipt -Row $row -RequireRunning:($Mode -eq 'Execute')
-        $identities[$row.row] = $identity
-        Write-KahuaFlagProgress $log 'checked' "Folders=$($receipt.selection); account sync=$($receipt.account_sync_state); reopened=$($receipt.reopened)."
-        $current.receipt = $receipt; $current.status = 'checked'; Save-FlagReport
+    if (-not $ApplyAsYouGo) {
+        $report.status = 'checking'; Save-FlagReport
+        $log.Phase='Preflight'
+        # Resolve and inspect the entire list before the first setting change.
+        for ($i=0; $i -lt $rows.Count; $i++) {
+            $row = $rows[$i]; $current = $report.projects[$i]
+            $log.Index=$i+1; $log.Project=$row.project_name
+            Write-KahuaFlagProgress $log 'project' 'Checking identity and current Folders switch before any changes.'
+            $current.status = 'checking'; Save-FlagReport
+            $identity = Select-KahuaFlagProject -Environment $Environment -Domain $row.domain -Name $row.project_name -LogContext $log -RecoveryAttempts $RecoveryAttempts
+            Write-KahuaFlagProgress $log 'read' 'Reading Local Files and reopening settings to confirm the current switch.'
+            $receipt = Get-KahuaProjectFlag -Identity $identity -LogContext $log -RecoveryAttempts $RecoveryAttempts
+            Assert-KahuaSyncFlagReceipt -Receipt $receipt -Row $row -RequireRunning:($Mode -eq 'Execute')
+            $identities[$row.row] = $identity
+            Write-KahuaFlagProgress $log 'checked' "Folders=$($receipt.selection); account sync=$($receipt.account_sync_state); reopened=$($receipt.reopened)."
+            $current.receipt = $receipt; $current.status = 'checked'; Save-FlagReport
+        }
     }
     if ($Mode -eq 'Execute') {
         $log.Index=0; $log.Project=''; $log.Phase='Apply'
-        Write-KahuaFlagProgress $log 'preflight-complete' "All $($rows.Count) projects passed preflight. Applying requested switches."
+        if ($ApplyAsYouGo) {
+            Write-KahuaFlagProgress $log 'apply-as-you-go' 'Checking and applying each project in CSV order. Changes to earlier projects remain saved if a later project fails.'
+        } else {
+            Write-KahuaFlagProgress $log 'preflight-complete' "All $($rows.Count) projects passed preflight. Applying requested switches."
+        }
         $report.status = 'applying'; Save-FlagReport
         for ($i=0; $i -lt $rows.Count; $i++) {
             $row = $rows[$i]; $current = $report.projects[$i]
             $log.Index=$i+1; $log.Project=$row.project_name
             $desired=if ($row.sync_enabled) { 'On' } else { 'Off' }
-            Write-KahuaFlagProgress $log 'project' "Requested Folders=$desired. Rechecking exact project identity."
-            $current.status = 'applying'; Save-FlagReport
+            Write-KahuaFlagProgress $log 'project' "Requested Folders=$desired. Verifying exact project identity."
+            $current.status = 'checking'
             # Re-resolve on every attempt; a previous receipt is never a reason
             # to skip a fresh UI read or to blindly invert the current switch.
             $identity = Select-KahuaFlagProject -Environment $Environment -Domain $row.domain -Name $row.project_name -LogContext $log -RecoveryAttempts $RecoveryAttempts
-            if ($identity.display -cne $identities[$row.row].display) { throw 'Project identity changed after preflight.' }
+            if (-not $ApplyAsYouGo -and $identity.display -cne $identities[$row.row].display) { throw 'Project identity changed after preflight.' }
+            $current.status = 'applying'; Save-FlagReport
             Write-KahuaFlagProgress $log 'apply' "Setting Folders=$desired, then verifying after reopening settings."
             $receipt = Set-KahuaProjectFlag -Identity $identity -Enabled $row.sync_enabled -LogContext $log -RecoveryAttempts $RecoveryAttempts
             Assert-KahuaSyncFlagReceipt -Receipt $receipt -Row $row -RequireDesired -RequireRunning

@@ -90,8 +90,8 @@ function Read-Latest([string]$State) {
     $path=Get-ChildItem (Join-Path $State 'attempts') -Directory | Sort-Object CreationTimeUtc -Descending | Select-Object -First 1
     Get-Content (Join-Path $path.FullName 'result.json') -Raw | ConvertFrom-Json
 }
-function Run([string]$State,[string]$Mode='Plan',[string]$Action='Enable') {
-    & $runner -CsvPath $csv -Environment DEVPRODUCTION -Action $Action -StateRoot $State -Mode $Mode | Out-Null
+function Run([string]$State,[string]$Mode='Plan',[string]$Action='Enable',[switch]$ApplyAsYouGo) {
+    & $runner -CsvPath $csv -Environment DEVPRODUCTION -Action $Action -StateRoot $State -Mode $Mode -ApplyAsYouGo:$ApplyAsYouGo | Out-Null
 }
 
 # Doe's file is accepted unchanged; opaque placeholder UIDs are not identity.
@@ -218,6 +218,32 @@ $passed++
 $offState=Join-Path $testRoot 'disable'
 Run $offState Execute Disable
 Assert ((Read-Latest $offState).status -eq 'flags-verified' -and [IO.File]::ReadAllText((Join-Path $runnerDir 'One.selection')) -eq 'Off') 'Disable did not set false'
+$passed++
+
+$directState=Join-Path $testRoot 'direct'
+Write-CsvText "domain,project_name`nOnindus,Direct One`nOnindus,Direct Two`n"
+$count=@(Events).Count
+Expect-Error { Run $directState Check -ApplyAsYouGo } 'requires -Mode Execute'
+Assert (@(Events).Count -eq $count) 'An invalid apply mode reached the desktop'
+$passed++
+Run $directState Execute -ApplyAsYouGo
+$trace=@(Events | Select-Object -Skip $count | Where-Object { $_ -match '^(SELECT|READ|SET|SAVE) ' })
+Assert (($trace -join '|') -ceq 'SELECT Direct One|SET Direct One True|SAVE Direct One On|SELECT Direct Two|SET Direct Two True|SAVE Direct Two On') 'Direct apply did not finish the first project before looking up the second'
+$report=Read-Latest $directState
+Assert ($report.apply_as_you_go -and $report.status -eq 'flags-verified') 'Direct apply was not recorded as verified'
+$count=@(Events).Count
+Run $directState Execute -ApplyAsYouGo
+Assert (-not @(Events | Select-Object -Skip $count | Where-Object { $_ -match '^SAVE ' }).Count) 'Direct retry saved already-correct switches again'
+$passed++
+
+Write-CsvText "domain,project_name`nOnindus,Direct Partial`nOnindus,Missing`nOnindus,Direct Untouched`n"
+$partialState=Join-Path $testRoot 'direct-partial'
+$count=@(Events).Count
+Expect-Error { Run $partialState Execute -ApplyAsYouGo } 'Project not found'
+$report=Read-Latest $partialState
+Assert (($report.projects.status -join ',') -ceq 'verified,failed,planned') 'Direct apply did not distinguish completed, failed, and untouched projects'
+$trace=@(Events | Select-Object -Skip $count | Where-Object { $_ -match '^(SELECT|READ|SET|SAVE) ' })
+Assert (($trace -join '|') -ceq 'SELECT Direct Partial|SET Direct Partial True|SAVE Direct Partial On|SELECT Missing') 'Direct apply continued after a lookup failure'
 $passed++
 
 foreach ($missing in @('Missing','Duplicate')) {
