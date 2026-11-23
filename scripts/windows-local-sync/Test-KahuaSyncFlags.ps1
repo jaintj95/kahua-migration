@@ -468,6 +468,7 @@ $searchHarness=New-Module -Name KahuaFlagSearchFixture -ArgumentList ($selectorS
         $script:picker=[pscustomobject]@{kind='picker'}
     }
     function Confirm-KahuaFlagDomain { param($Environment,$Domain) }
+    function Open-KahuaFlagHome { }
     function Assert-KahuaFlagNoSyncError { }
     function Get-KahuaActiveRoot {
         $script:navigationReads++
@@ -475,7 +476,7 @@ $searchHarness=New-Module -Name KahuaFlagSearchFixture -ArgumentList ($selectorS
     }
     function Find-KahuaControl {
         param($Id,$Name,$Type,$Root,[switch]$All)
-        if ($Id -in @('HomeButton','Shell_HomePartitionSelector')) { return $script:picker }
+        if ($Id -eq 'Shell_HomePartitionSelector') { return $script:picker }
         if ($Root -and $Root.generation -eq 1 -and
             (($script:mode -eq 'header-stale' -and $Id -eq 'Shell_PartitionSelector') -or
             ($script:mode -eq 'picker-stale' -and $Id -eq 'SearchBox'))) {

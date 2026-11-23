@@ -79,12 +79,29 @@ function Wait-KahuaFlagFolders {
     } while ($true)
 }
 
+function Get-KahuaFlagHomeButton {
+    param($Root)
+    $legacy = @(Find-KahuaControl -Id HomeButton -Name Home -Type Button -Root $Root -All)
+    if ($legacy.Count -gt 1) { throw 'Ambiguous Kahua Home controls.' }
+    if ($legacy.Count -eq 1) { return $legacy[0] }
+    Find-KahuaControl -Id EarthButton -Name 'Navigate to Kahua Home' -Type Button -Root $Root
+}
+
+function Open-KahuaFlagHome {
+    $root = Get-KahuaActiveRoot
+    $content = @(Find-KahuaControl -Id ShellContentFrame -Name 'Home Dashboard Main Content' -Type Group -Root $root -All)
+    if ($content.Count -gt 1) { throw 'Ambiguous Kahua Home content.' }
+    if ($content.Count -eq 1 -and $content[0].Current.IsEnabled) { return }
+    Invoke-KahuaControl (Get-KahuaFlagHomeButton -Root $root)
+    [void](Wait-KahuaControl -Id ShellContentFrame -Name 'Home Dashboard Main Content' -Type Group)
+}
+
 function Get-KahuaFlagBreadcrumbDomain {
     # Navigation can invalidate a descendant while FindAll is walking the
     # window. Retry this entire read with fresh elements, never the click.
     Invoke-KahuaReadRetry -RequireResult -UnavailableMessage 'The domain breadcrumb did not become readable. Keep the desktop maximized and enable My settings > General > Enable Full Navigation Breadcrumb.' -Read {
         $window = Get-KahuaWindow
-        $homeButton = Find-KahuaControl -Id HomeButton -Name Home -Type Button -Root $window
+        $homeButton = Get-KahuaFlagHomeButton -Root $window
         $content = Find-KahuaControl -Id ShellContentFrame -Root $window
         $top = (Get-KahuaControlRectangle $homeButton).Bottom
         $bottom = (Get-KahuaControlRectangle $content).Top
@@ -134,7 +151,7 @@ function Initialize-KahuaFlagDomain {
     Assert-KahuaFlagNoSyncError
     if (@(Find-KahuaControl -Id CloseModal -Type Button -All).Count) { throw 'Close the existing Kahua dialog before domain selection.' }
     Write-KahuaFlagProgress $LogContext 'domain-home' 'Opening Home to read the selected domain.'
-    Invoke-KahuaControl (Find-KahuaControl -Id HomeButton -Name Home -Type Button)
+    Open-KahuaFlagHome
     $actual = Get-KahuaFlagHomeDomain
     if ($Switch -and $actual -cne $Domain) {
         if ([string]::IsNullOrWhiteSpace($Domain)) { throw 'An exact CSV domain is required for automatic domain selection.' }
@@ -234,8 +251,7 @@ function Select-KahuaFlagProject {
     if (@(Find-KahuaControl -Id CloseModal -Type Button -All).Count) { throw 'Close the existing Kahua dialog before project search.' }
     # The selected-project header can collapse so far that its picker opens
     # outside the usable viewport. Home provides the full-width search entry.
-    Invoke-KahuaControl (Find-KahuaControl -Id HomeButton -Name Home -Type Button)
-    [void](Wait-KahuaControl -Id ShellContentFrame -Name 'Home Dashboard Main Content' -Type Group)
+    Open-KahuaFlagHome
     Confirm-KahuaFlagDomain -Environment $Environment -Domain $Domain
     $selectors = @(Find-KahuaControl -Id Shell_HomePartitionSelector -Name 'Select a Project' -Type Button -All)
     if ($selectors.Count -ne 1) { throw 'Cannot uniquely identify the project search control.' }

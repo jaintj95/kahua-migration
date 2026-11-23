@@ -93,17 +93,35 @@ $passed++
 # fresh verified window and a complete new snapshot, not cached coordinates.
 $flagAst=[System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'KahuaSyncFlagDesktop.psm1'),[ref]$tokens,[ref]$parseErrors)
 if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
-$breadcrumb=$flagAst.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-KahuaFlagBreadcrumbDomain'},$true)
-. ([scriptblock]::Create($breadcrumb.Extent.Text))
+foreach ($name in @('Get-KahuaFlagHomeButton','Open-KahuaFlagHome','Get-KahuaFlagBreadcrumbDomain')) {
+    $functionAst=$flagAst.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
+    . ([scriptblock]::Create($functionAst.Extent.Text))
+}
 $script:windowReads=0
 $script:expireAt='enumeration'
+$script:useEarthButton=$false
+$script:onHome=$false
+$script:homeClicks=0
 function Get-KahuaWindow { $script:windowReads++; return [pscustomobject]@{generation=$script:windowReads} }
+function Get-KahuaActiveRoot { Get-KahuaWindow }
 function Find-KahuaControl {
     param($Id,$Name,$Type,$Root,[switch]$All)
+    if ($Id -eq 'HomeButton') {
+        if (-not $script:useEarthButton -and $Name -ceq 'Home' -and $Type -eq 'Button') { return [pscustomobject]@{kind='home'} }
+        return
+    }
+    if ($Id -eq 'EarthButton') {
+        if ($script:useEarthButton -and $Name -ceq 'Navigate to Kahua Home' -and $Type -eq 'Button') { return [pscustomobject]@{kind='home'} }
+        throw 'Wrong globe selector.'
+    }
+    if ($Id -eq 'ShellContentFrame') {
+        if (-not $Name -or ($Name -ceq 'Home Dashboard Main Content' -and $script:onHome)) {
+            return [pscustomobject]@{kind='content';Current=[pscustomobject]@{IsEnabled=$true}}
+        }
+        return
+    }
     if ($Root.generation -eq 1 -and $All -and $script:expireAt -eq 'enumeration') { throw [KahuaTest.ElementNotAvailableException]::new() }
     if ($Root.generation -eq 1 -and $All -and $script:expireAt -eq 'empty') { return }
-    if ($Id -eq 'HomeButton') { return [pscustomobject]@{kind='home'} }
-    if ($Id -eq 'ShellContentFrame') { return [pscustomobject]@{kind='content'} }
     $crumb=[pscustomobject]@{kind='crumb';generation=$Root.generation}
     $crumb | Add-Member ScriptMethod GetCurrentPropertyValue {
         param($Property)
@@ -112,6 +130,18 @@ function Find-KahuaControl {
         return 'Open project descendants for Onindus'
     }
     return $crumb
+}
+function Invoke-KahuaControl {
+    param($Control)
+    if ($Control.kind -ne 'home' -or $script:onHome) { throw 'Unexpected Home click.' }
+    $script:homeClicks++
+    $script:onHome=$true
+}
+function Wait-KahuaControl {
+    param($Id,$Name,$Type)
+    if ($Id -ne 'ShellContentFrame' -or $Name -cne 'Home Dashboard Main Content' -or $Type -ne 'Group' -or -not $script:onHome) {
+        throw 'Wrong Home destination.'
+    }
 }
 function Get-KahuaControlRectangle {
     param($Control)
@@ -128,5 +158,14 @@ Assert ((Get-KahuaFlagBreadcrumbDomain) -ceq 'Onindus' -and $script:windowReads 
 $passed++
 $script:windowReads=0; $script:expireAt='empty'
 Assert ((Get-KahuaFlagBreadcrumbDomain) -ceq 'Onindus' -and $script:windowReads -eq 2) 'A temporarily empty breadcrumb was mistaken for a disabled setting'
+$passed++
+$script:useEarthButton=$true; $script:expireAt=''
+Assert ((Get-KahuaFlagBreadcrumbDomain) -ceq 'Onindus') 'The globe did not anchor the domain breadcrumb'
+$passed++
+Open-KahuaFlagHome
+Assert ($script:onHome -and $script:homeClicks -eq 1) 'The globe did not open Kahua Home'
+$passed++
+Open-KahuaFlagHome
+Assert ($script:homeClicks -eq 1) 'The runner clicked the globe while already on Home'
 $passed++
 Write-Output "PASS: $passed desktop geometry/read scenarios (simulated controls)."
