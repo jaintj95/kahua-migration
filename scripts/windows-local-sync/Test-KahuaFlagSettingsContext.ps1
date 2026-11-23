@@ -41,8 +41,14 @@ function Reset-Fixture([string]$Fault='',[string]$View='project') {
     $script:window=New-Control 'window'
     $script:window.Current.ControlType=[Windows.Automation.ControlType]::Window
     $script:modal=New-Control 'modal' $script:window
+    $script:modal.Current.AutomationId='ModalRoot'
     $script:project=New-Control 'project' $script:modal
     $script:change=New-Control 'change' $script:project
+    if ($Fault -eq 'disabled-change') { $script:change.Current.IsEnabled=$false }
+}
+function Get-KahuaActiveRoot {
+    if ($script:fixture.fault -eq 'outside-modal') { return $script:window }
+    $script:modal
 }
 function Find-KahuaControl {
     param($Id,$Name,$Type,$Root,[switch]$All)
@@ -111,13 +117,20 @@ function Find-KahuaControl {
                 if ($script:fixture.fault -eq 'modern-settings') { $matches+=New-Control 'footer-close' }
             } elseif ($Name -eq 'Change') {
                 Assert ($script:fixture.view -eq 'local-files') 'Read occurred outside Local Files'
-                Assert ($Type -eq 'Button') 'Wrong project selector type'
-                $matches=@($script:change)
+                Assert ($Type -eq 'Button' -and $All) 'Wrong project selector type'
+                if ($script:fixture.fault -notin @('no-change','no-heading','duplicate-heading','outside-modal')) {
+                    $matches=@($script:change)
+                }
+                if ($script:fixture.fault -eq 'duplicate-change') { $matches+=New-Control 'change' $script:project }
             } else {
                 Assert ($script:fixture.view -eq 'local-files') 'Read occurred outside Local Files'
                 Assert ($Name -ceq '0002 - Exact project' -and $Type -eq 'Text' -and $Root -and $All) 'The requested project identity was lost'
                 if ([object]::ReferenceEquals($Root,$script:project) -and $script:fixture.fault -ne 'wrong-local-project') {
                     $matches=@(New-Control 'exact-project')
+                }
+                if ([object]::ReferenceEquals($Root,$script:modal) -and $script:fixture.fault -in @('no-change','duplicate-heading')) {
+                    $matches=@(New-Control 'exact-project')
+                    if ($script:fixture.fault -eq 'duplicate-heading') { $matches+=New-Control 'exact-project' }
                 }
             }
         }
@@ -196,10 +209,10 @@ Reset-Fixture 'duplicate-menu'
 Expect-Error { Open-KahuaFlagSettings -Identity $identity } 'Ambiguous My settings buttons'
 Assert (($script:fixture.navigation -join ',') -ceq 'account') 'An ambiguous menu button was activated'
 $passed++
-foreach ($fault in @('','paused')) {
+foreach ($fault in @('','paused','no-change','disabled-change')) {
     Reset-Fixture $fault 'local-files'
     $state=Read-KahuaFlagSettingsContext -Identity $identity
-    $expected=if ($fault) { $fault } else { 'running' }
+    $expected=if ($fault -eq 'paused') { 'paused' } else { 'running' }
     Assert ($state -ceq $expected -and $script:fixture.navigation.Count -eq 0 -and $script:fixture.closes -eq 0) 'An open settings read navigated or changed account status'
     $passed++
 }
@@ -209,6 +222,8 @@ foreach ($case in @(
     @('missing-modal',"id='CloseModal'.*found 0"),@('duplicate-modal',"id='CloseModal'.*found 2"),
     @('missing-save',"name='Save'.*found 0"),@('missing-cancel','footer Close button when Cancel is absent'),
     @('unconfigured','Enable Local Files for the account manually'),@('wrong-local-project','different project'),
+    @('duplicate-change','multiple Change buttons'),@('outside-modal','outside the settings dialog'),
+    @('no-heading','expected one heading.*found 0'),@('duplicate-heading','expected one heading.*found 2'),
     @('missing-folders','Local Files Folders control')
 )) {
     Reset-Fixture $case[0] 'local-files'

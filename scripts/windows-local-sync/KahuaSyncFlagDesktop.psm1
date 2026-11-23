@@ -395,12 +395,30 @@ function Read-KahuaFlagSettingsContext {
     [void](Find-KahuaControl -Name Save -Type Button)
     [void](Get-KahuaFlagSettingsFooter)
     Write-KahuaFlagProgress $LogContext 'settings-project' "Account sync=$state. Verifying the project shown in Local Files."
-    $change = Wait-KahuaControl -Name Change -Type Button
-    $container = $change; $matched = $false
-    for ($level=0; $level -lt 4; $level++) {
-        $container = [Windows.Automation.TreeWalker]::RawViewWalker.GetParent($container)
-        if (-not $container -or $container.Current.ControlType -eq [Windows.Automation.ControlType]::Window) { break }
-        if (@(Find-KahuaControl -Name $Identity.display -Type Text -Root $container -All).Count -eq 1) { $matched=$true; break }
+    $root = Get-KahuaActiveRoot
+    $changes = @(Find-KahuaControl -Name Change -Type Button -Root $root -All)
+    if ($changes.Count -gt 1) { throw 'Local Files exposes multiple Change buttons for the project.' }
+    $matched = $false
+    if ($changes.Count -eq 1) {
+        # Change identifies the project heading even when the button is disabled.
+        $container = $changes[0]
+        for ($level=0; $level -lt 4; $level++) {
+            $container = [Windows.Automation.TreeWalker]::RawViewWalker.GetParent($container)
+            if (-not $container -or $container.Current.ControlType -eq [Windows.Automation.ControlType]::Window) { break }
+            if (@(Find-KahuaControl -Name $Identity.display -Type Text -Root $container -All).Count -eq 1) { $matched=$true; break }
+        }
+    } else {
+        # Some project views omit Change. Check the exact heading in the active
+        # Local Files dialog, excluding the main-window project header.
+        if ($root.Current.AutomationId -notin @('ModalView','ModalRoot')) {
+            throw 'Cannot verify the Local Files project without Change outside the settings dialog.'
+        }
+        $headings = @(Find-KahuaControl -Name $Identity.display -Type Text -Root $root -All)
+        if ($headings.Count -ne 1) {
+            throw "Cannot verify the Local Files project without Change: expected one heading '$($Identity.display)', found $($headings.Count)."
+        }
+        Write-KahuaFlagProgress $LogContext 'settings-project' 'Verified the exact project heading in Local Files without a Change button.'
+        $matched = $true
     }
     if (-not $matched) { throw 'Local Files is showing a different project.' }
     Wait-KahuaFlagFolders
