@@ -68,6 +68,29 @@ Actions, without Kahua access; its results do not establish live upload safety.
 Source archives, downloaded originals, journals, session logs, and credentials
 remain local and are excluded from source control.
 
+## Run or resume production sync flags in batches
+
+From **Windows Command Prompt** in the repository root, with Kahua Production
+open, run the command below. Set `$start` and `$end` to the first and last
+project positions in the original 903-project CSV. Positions start at 1 and
+exclude the header. Keep the original CSV in the same order between runs.
+
+```cmd
+powershell.exe -NoProfile -Command "$ErrorActionPreference = 'Stop'; $start = 221; $end = 320; $source = 'C:\Users\MigrationEngineer\Downloads\sameProjectsEnableSync.csv'; $projects = @(Import-Csv -LiteralPath $source); if ($start -lt 1 -or $end -lt $start -or $end -gt $projects.Count) { throw 'Batch range is outside the CSV.' }; $batch = Join-Path $env:TEMP ('kahua-projects-{0}-{1}.csv' -f $start,$end); $projects | Select-Object -Skip ($start - 1) -First ($end - $start + 1) | Export-Csv -LiteralPath $batch -NoTypeInformation -Encoding UTF8; & '.\scripts\windows-local-sync\Invoke-KahuaSyncFlags.ps1' -CsvPath $batch -Environment PRODUCTION -Action Enable -Mode Execute -ApplyAsYouGo"
+```
+
+- **Start a batch** by setting the inclusive range, such as `221` through `320`
+  for 100 projects. The runner enables and verifies each project in CSV order.
+- **Resume a stopped batch** by adding the failed item's position in the batch
+  to the batch's original start, then subtracting 1. For example, item `62/100`
+  in `221–320` is CSV project `282`. Rerun the same command with `$start = 282`
+  and `$end = 320` to process the remaining 39 projects. If a Save was sent
+  before the stop, include that project so the runner reads its current switch
+  and skips Save if it is already on.
+- **Continue to the next batch** once the run reports `flags-verified` for the
+  selected count. Start at the previous batch end plus 1. Keep Kahua maximized
+  and the Windows session unlocked while the command runs.
+
 ## Drawing workflow
 
 For the CSV-driven project queue, start with [AUTOMATIC_RUN.md](AUTOMATIC_RUN.md).
