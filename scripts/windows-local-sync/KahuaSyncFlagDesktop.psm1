@@ -433,7 +433,7 @@ function Assert-KahuaFlagNoUnsavedWarning {
 }
 
 function Wait-KahuaFlagSave {
-    param([string]$Desired, [int]$TimeoutSeconds = 30, [int]$SettledMilliseconds = 2000,[hashtable]$LogContext)
+    param([string]$Desired, [int]$TimeoutSeconds = 300, [int]$SettledMilliseconds = 2000,[hashtable]$LogContext)
     Write-KahuaFlagProgress $LogContext 'save-wait' "Waiting for the Local Files controls and Folders to settle (up to ${TimeoutSeconds}s)."
     # Save is disabled while the request is in flight as well as after it
     # finishes. One disabled sample is not evidence that closing is safe.
