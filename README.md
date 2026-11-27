@@ -6,11 +6,11 @@ entry points, dependencies, and run state. Keeping them together makes one
 repository the source for migration work without requiring either runtime to
 install the other.
 
-| Workflow | Source and entry point | Runtime | Guide |
-| --- | --- | --- | --- |
-| Drawings and revisions | `kahua_migration/`; `python -m kahua_migration browser migrate` | macOS or native Windows; Python 3.10+, Playwright and offline OCR | [AUTOMATIC_RUN.md](AUTOMATIC_RUN.md) |
-| Project sync flags only | `Start-SyncFlags.cmd` (guided); `scripts/windows-local-sync/Invoke-KahuaSyncFlags.ps1` (commands) | Windows PowerShell 5.1 and Kahua for Windows | [SYNC_FLAGS.md](SYNC_FLAGS.md) |
-| Documents and photos | `scripts/windows-local-sync/`; `Invoke-KahuaSyncBatch.ps1` | Windows PowerShell 5.1 and Kahua for Windows | [LOCAL_FILE_SYNC.md](LOCAL_FILE_SYNC.md) |
+| Workflow                | Source and entry point                                                                            | Runtime                                                           | Guide                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------- |
+| Drawings and revisions  | `kahua_migration/`; `python -m kahua_migration browser migrate`                                   | macOS or native Windows; Python 3.10+, Playwright and offline OCR | [AUTOMATIC_RUN.md](AUTOMATIC_RUN.md)     |
+| Project sync flags only | `Start-SyncFlags.cmd` (guided); `scripts/windows-local-sync/Invoke-KahuaSyncFlags.ps1` (commands) | Windows PowerShell 5.1 and Kahua for Windows                      | [SYNC_FLAGS.md](SYNC_FLAGS.md)           |
+| Documents and photos    | `scripts/windows-local-sync/`; `Invoke-KahuaSyncBatch.ps1`                                        | Windows PowerShell 5.1 and Kahua for Windows                      | [LOCAL_FILE_SYNC.md](LOCAL_FILE_SYNC.md) |
 
 For **Doe's simpler flag workflow**, double-click `Start-SyncFlags.cmd` and
 follow the prompts in [SYNC_FLAGS.md](SYNC_FLAGS.md#guided-launcher). The launcher
@@ -164,11 +164,11 @@ a transient Kahua download-service error. Historical pilot results are retained
 below. **A fresh uninterrupted upload run, a cold CLI execution, and a
 1,000-project rollout have not been validated.**
 
-| Command | Destination selection | Scope |
-|---|---|---|
-| `browser migrate` | Automatic from CSV | Project queue; every audited batch; one PDF per upload |
-| `browser pilot` | Operator opens the destination | Earlier bounded four-record/two-file pilot |
-| `browser run` | Generic profile recipes | Older adapter; tenant recipes remain uncalibrated |
+| Command           | Destination selection          | Scope                                                  |
+| ----------------- | ------------------------------ | ------------------------------------------------------ |
+| `browser migrate` | Automatic from CSV             | Project queue; every audited batch; one PDF per upload |
+| `browser pilot`   | Operator opens the destination | Earlier bounded four-record/two-file pilot             |
+| `browser run`     | Generic profile recipes        | Older adapter; tenant recipes remain uncalibrated      |
 
 The new automatic worker uses the full export and unfiltered UI count for
 membership, then exact batch/sheet filters for each record's metadata, workflow
@@ -181,12 +181,12 @@ prototype is retained separately.
 
 `upload_sequence` orders entire version-set folders. It does not set revision numbers.
 
-| Sheet | Bid Set, sequence 1 | Revision abc, sequence 2 | Later set, sequence 3 |
-|---|---|---|---|
-| A, appears in all three | Revision 1 | Revision 2 | Revision 3 |
-| B, first appears in set 2 | — | Revision 1 | Revision 2 |
-| C, skips set 2 | Revision 1 | — | Revision 2 |
-| D, first appears in set 3 | — | — | Revision 1 |
+| Sheet                     | Bid Set, sequence 1 | Revision abc, sequence 2 | Later set, sequence 3 |
+| ------------------------- | ------------------- | ------------------------ | --------------------- |
+| A, appears in all three   | Revision 1          | Revision 2               | Revision 3            |
+| B, first appears in set 2 | —                   | Revision 1               | Revision 2            |
+| C, skips set 2            | Revision 1          | —                        | Revision 2            |
+| D, first appears in set 3 | —                   | —                        | Revision 1            |
 
 For the example of a 23-file Bid Set followed by a 5-file Revision abc, every file in the first folder finishes the workflow before the second folder starts. Each of the five later files receives either revision 1, if new, or the next revision for that sheet. Kahua's auto-increment result must match the value calculated from the source history.
 
@@ -228,12 +228,12 @@ The supplied complete source sample contains 166 historical PDFs in three batche
 
 The approved destination is `DEVPRODUCTION → Onindus → 0001 - 220 - Seattle Heights → Sheets/Migration Pilot`. On October 29, 2026 (India time), all three pilot batches completed through the live browser with operator file selection. All four revision records completed submit, accept and release:
 
-| Sheet | Revision | Batch | Revision and batch dates | Current state | Original PDF integrity |
-|---|---|---|---|---|---|
-| 1 | 1 | Bid Set - 7/22/2025 | July 22, 2025 | Superseded; Current Rev: No | 1,433,251 bytes; SHA-256 matches source |
-| 1 | 2 | Revision - 12/12/2025 | December 12, 2025 | Superseded; Current Rev: No | 1,394,257 bytes; SHA-256 matches source |
-| 1 | 3 | Roadway Revision - 4/13/2026 | April 13, 2026 | Released; Current Rev: Yes | 1,394,225 bytes; SHA-256 matches source |
-| ROADWAY-SIGN4 | 1 | Roadway Revision - 4/13/2026 | April 13, 2026 | Released; Current Rev: Yes | 190,062 bytes; SHA-256 matches source |
+| Sheet         | Revision | Batch                        | Revision and batch dates | Current state               | Original PDF integrity                  |
+| ------------- | -------- | ---------------------------- | ------------------------ | --------------------------- | --------------------------------------- |
+| 1             | 1        | Bid Set - 7/22/2025          | July 22, 2025            | Superseded; Current Rev: No | 1,433,251 bytes; SHA-256 matches source |
+| 1             | 2        | Revision - 12/12/2025        | December 12, 2025        | Superseded; Current Rev: No | 1,394,257 bytes; SHA-256 matches source |
+| 1             | 3        | Roadway Revision - 4/13/2026 | April 13, 2026           | Released; Current Rev: Yes  | 1,394,225 bytes; SHA-256 matches source |
+| ROADWAY-SIGN4 | 1        | Roadway Revision - 4/13/2026 | April 13, 2026           | Released; Current Rev: Yes  | 190,062 bytes; SHA-256 matches source   |
 
 Kahua recognized sheet 1 as **Revise**, retained its number and title, and its Auto-Increment action correctly produced revisions **2** and **3**. Auto-Increment left the new sheet's revision blank; setting revision **1** only where blank preserved sheet 1's calculated revision **3**. The final mixed batch was filtered by its batch name and both records were submitted, accepted and released together. Its submit dialog confirmed file version **1** for both records.
 
@@ -243,10 +243,10 @@ Evidence is saved in `output/browser-evidence/live-pilot-events.jsonl`, four `*-
 
 `pilot/` contains copies of four audited source files, a separate CSV/configuration/manifest, and provenance linking back to the full source audit. Its source audit has zero errors and zero warnings. This does not mark the browser adapter as validated.
 
-| Batch | Local files | Expected revisions |
-|---|---|---|
-| Bid Set - 7/22/2025 | `pilot/source/Drawings/01/1.pdf` | Sheet 1 → 1 |
-| Revision - 12/12/2025 | `pilot/source/Drawings/02/1.pdf` | Sheet 1 → 2 |
+| Batch                        | Local files                                           | Expected revisions             |
+| ---------------------------- | ----------------------------------------------------- | ------------------------------ |
+| Bid Set - 7/22/2025          | `pilot/source/Drawings/01/1.pdf`                      | Sheet 1 → 1                    |
+| Revision - 12/12/2025        | `pilot/source/Drawings/02/1.pdf`                      | Sheet 1 → 2                    |
 | Roadway Revision - 4/13/2026 | `pilot/source/Drawings/03/1.pdf`, `ROADWAY-SIGN4.pdf` | Sheet 1 → 3; ROADWAY-SIGN4 → 1 |
 
 The standalone controls were calibrated in their own browser session. File selection during the first assisted pilot was performed by the user; Finder was not automated. The user approved a second four-file test in `Sheets/Migration Automation Pilot`, using the audited proposal under `output/automation-pilot-proposal/` and its own journal. This authorization does not include other projects or the full source sample.
@@ -259,13 +259,13 @@ The three batches completed in order, with the same final metadata and history s
 
 The journal at `state/automation-pilot.sqlite` contains four verified operations, three completed batch checks and no pending mutations. Preserve it: a new journal must never be used to replay uploads into this populated folder.
 
-| Evidence | File |
-|---|---|
-| Final metadata, history and file-version audit | `output/automation-pilot-run/final-audit/metadata-audit.json` |
-| Independently observed records and screenshots | `output/automation-pilot-run/final-audit/readback-report.json` |
-| Original bytes checked after all releases | `output/automation-pilot-run/retained-originals/integrity-report.json` |
-| Packaged runner's live resume result | `output/automation-pilot-run/worker-resume-check/run-report.json` |
-| Current calibration status | `output/automation-pilot-run/progress.json` |
+| Evidence                                       | File                                                                   |
+| ---------------------------------------------- | ---------------------------------------------------------------------- |
+| Final metadata, history and file-version audit | `output/automation-pilot-run/final-audit/metadata-audit.json`          |
+| Independently observed records and screenshots | `output/automation-pilot-run/final-audit/readback-report.json`         |
+| Original bytes checked after all releases      | `output/automation-pilot-run/retained-originals/integrity-report.json` |
+| Packaged runner's live resume result           | `output/automation-pilot-run/worker-resume-check/run-report.json`      |
+| Current calibration status                     | `output/automation-pilot-run/progress.json`                            |
 
 This was interactive calibration of the standalone script: code and targeting corrections were required while it ran. It is distinct from a fresh, uninterrupted command-line upload test. The later `PilotRunner.run()` resume test completed automatically against the finished journal: it skipped all completed mutations, independently audited the four records, and downloaded and hashed all four originals again.
 
@@ -295,14 +295,14 @@ This run required code corrections and supervised recovery, including completing
 
 A second `PilotRunner.run()` against the completed journal then passed without intervention. It independently re-read all four records and re-downloaded all four original PDFs. The journal stayed unchanged at **66 events**, with four verified operations and three completed batch checks; no uploads or workflow commands were repeated.
 
-| Evidence | File |
-|---|---|
-| Consolidated result, scope and remaining limits | `output/worker-validation-run/validation-summary.json` |
-| Successful resumed run and zero-issue metadata comparison | `output/worker-validation-run/attempt-17/run-report.json` |
-| Final independent metadata and history observations | `output/worker-validation-run/attempt-17/006-project-final/readback-report.json` |
-| All original PDFs verified after release | `output/worker-validation-run/attempt-17/final-originals/integrity-report.json` |
-| Completed-journal resume and unchanged event count | `output/worker-validation-run/completed-resume/resume-proof.json` |
-| Local regression results and source fingerprints | `output/worker-validation-run/local-test-results.json` |
+| Evidence                                                  | File                                                                             |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Consolidated result, scope and remaining limits           | `output/worker-validation-run/validation-summary.json`                           |
+| Successful resumed run and zero-issue metadata comparison | `output/worker-validation-run/attempt-17/run-report.json`                        |
+| Final independent metadata and history observations       | `output/worker-validation-run/attempt-17/006-project-final/readback-report.json` |
+| All original PDFs verified after release                  | `output/worker-validation-run/attempt-17/final-originals/integrity-report.json`  |
+| Completed-journal resume and unchanged event count        | `output/worker-validation-run/completed-resume/resume-proof.json`                |
+| Local regression results and source fingerprints          | `output/worker-validation-run/local-test-results.json`                           |
 
 The corrections handle resized or partially hidden upload columns, stale cell positions, filename identity across horizontal scrolling, calendar focus, and changing record-row labels. Offscreen fields stay unknown until observed; filename identity can carry across a scroll only on the same previously observed row. Focused OCR crops must pass the original confidence threshold for both label and value. None of these changes expands the four-record/two-file limit.
 
@@ -415,10 +415,10 @@ and a UI that cannot be recovered can still block the queue. See
 The automatic worker's live queue calibration completed the following scope
 on October 29, 2026, in `DEVPRODUCTION → Onindus`:
 
-| Project and folder | Verified result |
-|---|---|
-| Existing `0001 - 220 - Seattle Heights`, `Sheets/Migration CSV Queue Validation` | One batch; sheet `1`, revision `1`, released/current |
-| Created `CSV20261029 - Kahua CSV Automation Validation`, `Sheets/Imported` | Three ordered batches; sheet `1` revisions `1` and `2` superseded, revision `3` released/current; `ROADWAY-SIGN4` released/current at revision `1` |
+| Project and folder                                                               | Verified result                                                                                                                                    |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Existing `0001 - 220 - Seattle Heights`, `Sheets/Migration CSV Queue Validation` | One batch; sheet `1`, revision `1`, released/current                                                                                               |
+| Created `CSV20261029 - Kahua CSV Automation Validation`, `Sheets/Imported`       | Three ordered batches; sheet `1` revisions `1` and `2` superseded, revision `3` released/current; `ROADWAY-SIGN4` released/current at revision `1` |
 
 All five revisions are accepted, have one file version, and retain the expected
 titles, filenames, batch names, batch dates and revision dates. All five
@@ -448,13 +448,13 @@ audit issues and no journal created. A fresh CLI launch with `--execute` has
 not been tested. Local evidence is retained under
 `output/automatic-queue-validation/`; it is excluded from the source ZIP.
 
-| Evidence in the original workspace | File |
-|---|---|
-| Consolidated scope, independent checks and limitations | `output/automatic-queue-validation/validation-summary.json` |
-| Successful two-project verification | `output/automatic-queue-validation/run-11/run-report.json` |
-| Unchanged operation journal across resume | `output/automatic-queue-validation/run-11/resume-proof.json` |
-| Passing 116-test suite and source fingerprints | `output/automatic-queue-validation/final-local-test-results.json` |
-| Real plan-only CLI invocation | `output/automatic-queue-validation/final-cli-plan/cli-proof.json` |
+| Evidence in the original workspace                     | File                                                              |
+| ------------------------------------------------------ | ----------------------------------------------------------------- |
+| Consolidated scope, independent checks and limitations | `output/automatic-queue-validation/validation-summary.json`       |
+| Successful two-project verification                    | `output/automatic-queue-validation/run-11/run-report.json`        |
+| Unchanged operation journal across resume              | `output/automatic-queue-validation/run-11/resume-proof.json`      |
+| Passing 116-test suite and source fingerprints         | `output/automatic-queue-validation/final-local-test-results.json` |
+| Real plan-only CLI invocation                          | `output/automatic-queue-validation/final-cli-plan/cli-proof.json` |
 
 An additional live failure-isolation check staged one existing test PDF and
 injected an attachment-stage failure while Kahua's real Add Files form was
@@ -466,12 +466,12 @@ events, operations and batch checks; the original journal was opened read-only.
 Live uncertain-Save failures were not injected: those scenarios are covered by
 the local target that deliberately allows duplicate saves.
 
-| Failure-isolation evidence in the original workspace | File |
-|---|---|
-| Real upload-form recovery and next-project verification | `output/project-isolation-validation/live-handoff-04/run-report.json` |
-| Unchanged journal and precise live-test scope | `output/project-isolation-validation/live-handoff-04-proof.json` |
-| Final regression results and source fingerprints | `output/project-isolation-validation/full-test-results.json` |
-| Final paused-folder membership export | `output/project-isolation-validation/final-membership/export/membership.json` |
+| Failure-isolation evidence in the original workspace    | File                                                                          |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Real upload-form recovery and next-project verification | `output/project-isolation-validation/live-handoff-04/run-report.json`         |
+| Unchanged journal and precise live-test scope           | `output/project-isolation-validation/live-handoff-04-proof.json`              |
+| Final regression results and source fingerprints        | `output/project-isolation-validation/full-test-results.json`                  |
+| Final paused-folder membership export                   | `output/project-isolation-validation/final-membership/export/membership.json` |
 
 Large-project throughput, long-running browser stability and tenant-specific
 layouts need measurement before production rollout. The old pilot command's

@@ -100,6 +100,14 @@ $rows=@(Read-KahuaSyncFlagCsv $csv DEVPRODUCTION -Action Enable)
 Assert ($rows.Count -eq 2 -and $rows[0].sync_enabled -eq $true -and $rows[1].scope -eq 'project-files') 'Doe CSV was not accepted'
 Assert ($rows[0].auto_select_domain) 'CSV domain did not request automatic selection'
 $passed++
+$legacyHash = Get-KahuaFlagInputHash -Rows $rows
+Write-CsvText "domain,project_clean_name,project_uid`nOnindus,220 - Seattle Heights,aaa-111`nOnindus,777-Warehouse Building,bbb-222`n"
+$cleanRows=@(Read-KahuaSyncFlagCsv $csv DEVPRODUCTION -Action Enable)
+Assert ((Get-KahuaFlagInputHash -Rows $cleanRows) -ceq $legacyHash) 'Renaming the column changed the batch binding'
+Write-CsvText "domain,project_name,project_clean_name,project_uid`nOnindus,Old Name,220 - Seattle Heights,aaa-111`n"
+$cleanRows=@(Read-KahuaSyncFlagCsv $csv DEVPRODUCTION -Action Enable)
+Assert ($cleanRows[0].project_name -ceq '220 - Seattle Heights') 'project_clean_name did not take precedence'
+$passed++
 Expect-Error { Read-KahuaSyncFlagCsv $csv DEVPRODUCTION } 'sync_enabled column'
 $passed++
 Write-CsvText "project_name,sync_enabled`nOne,false`nTwo,TRUE`n"

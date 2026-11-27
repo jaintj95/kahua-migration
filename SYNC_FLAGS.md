@@ -57,17 +57,19 @@ file was preserved during testing. Automatic history gives corrected inputs a
 separate batch. If supplying an explicit `-StateRoot`, use a new state directory
 for corrected inputs and retain the original one.
 
-Doe's supplied format works unchanged with `-Action Enable` or `-Action Disable`:
+Use `project_clean_name` for the exact project name with `-Action Enable` or
+`-Action Disable`:
 
 ```csv
-domain,project_name,project_uid
+domain,project_clean_name,project_uid
 Onindus,220 - Seattle Heights,aaa-111
 Onindus,777-Warehouse Building,bbb-222
 ```
 
-Only `domain` and `project_name` identify the requested destination.
-`project_uid` is ignored; the sample IDs are placeholders. If Doe supplies only
-`project_name`, the runner uses the domain already selected in Kahua. Optional
+Existing CSVs with `project_name` still work. If both name columns are present,
+the runner uses `project_clean_name`. Renaming the header alone preserves batch
+history. `project_uid` is ignored; the sample IDs are placeholders. If the CSV
+has no domain, the runner uses the domain already selected in Kahua. Optional
 `-Domain Onindus` adds a check against Doe's selection; it does not request a
 switch. Fill `domain` on every row to request automatic selection. Partially
 filled domain columns are rejected.

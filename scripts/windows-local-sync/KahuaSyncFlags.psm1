@@ -55,6 +55,8 @@ function Read-KahuaSyncFlagCsv {
     }
     $rows = @(Import-Csv -LiteralPath $CsvPath -Encoding UTF8)
     if (-not $rows.Count) { throw 'The CSV contains no project rows.' }
+    $nameColumn = if ($rows[0].PSObject.Properties['project_clean_name']) { 'project_clean_name' } else { 'project_name' }
+    if (-not $rows[0].PSObject.Properties[$nameColumn]) { throw 'Add a project_clean_name or project_name column.' }
     $csvHasDomain = [bool]$rows[0].PSObject.Properties['domain']
     $filledDomains = if ($csvHasDomain) { @($rows | Where-Object { -not [string]::IsNullOrWhiteSpace($_.domain) }).Count } else { 0 }
     if ($filledDomains -gt 0 -and $filledDomains -ne $rows.Count) {
@@ -64,9 +66,9 @@ function Read-KahuaSyncFlagCsv {
     $seen = @{}; $result = @(); $batchDomain = $Domain
     foreach ($row in $rows) {
         $line = $result.Count + 2
-        $name = if ($row.PSObject.Properties['project_name']) { [string]$row.project_name } else { '' }
+        $name = [string]$row.PSObject.Properties[$nameColumn].Value
         if ([string]::IsNullOrWhiteSpace($name) -or $name -cne $name.Trim() -or $name -match '[\x00-\x1f]') {
-            throw "Row ${line}: project_name must be an exact, nonempty name without leading/trailing whitespace."
+            throw "Row ${line}: $nameColumn must be an exact, nonempty name without leading/trailing whitespace."
         }
         $rowDomain = if ($autoSelectDomain) { [string]$row.domain } else { $Domain }
         if ($rowDomain -and ($rowDomain -cne $rowDomain.Trim() -or $rowDomain -match '[\x00-\x1f]')) {
@@ -82,7 +84,7 @@ function Read-KahuaSyncFlagCsv {
                 throw "Row ${line}: the domain/project name has an unsupported Windows directory mapping."
             }
         }
-        if ($seen.ContainsKey($name)) { throw "Duplicate project_name in CSV: $name" }
+        if ($seen.ContainsKey($name)) { throw "Duplicate $nameColumn in CSV: $name" }
         $seen[$name] = $true
         $csvEnabled = $null
         if ($row.PSObject.Properties['sync_enabled']) {
